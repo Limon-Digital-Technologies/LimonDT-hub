@@ -1,0 +1,69 @@
+name: Publish Limon Hub
+
+on:
+  push:
+    tags:
+      - "hub-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Validate updater signing configuration
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Add the private signing key as the TAURI_SIGNING_PRIVATE_KEY repository secret."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
+            throw "Add the public signing key as the TAURI_UPDATER_PUBLIC_KEY repository variable."
+          }
+
+          $configPath = "src-tauri/tauri.conf.json"
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -ne "hub-v$($config.version)") {
+            throw "Release tag must match the Hub version: hub-v$($config.version)."
+          }
+          $config.bundle.createUpdaterArtifacts = $true
+          $config.plugins.updater.pubkey = $env:TAURI_UPDATER_PUBLIC_KEY
+          $json = ConvertTo-Json $config -Depth 100
+          [System.IO.File]::WriteAllText($configPath, $json, [System.Text.UTF8Encoding]::new($false))
+
+      - name: Publish signed Windows release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_UPDATER_ENABLED: "true"
+        with:
+          tagName: hub-v__VERSION__
+          releaseName: Limon Hub v__VERSION__
+          releaseBody: Download the Windows installer from the release assets.
+          releaseDraft: false
+          prerelease: false
+          generateReleaseNotes: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: false
+          args: --bundles msi

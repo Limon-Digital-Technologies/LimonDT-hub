@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Limon Calculator",
+  "version": "1.0.0",
+  "identifier": "tech.limon.digital.calculator",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1421",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Limon Calculator",
+        "width": 440,
+        "height": 700,
+        "minWidth": 360,
+        "minHeight": 560,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi"],
+    "icon": ["icons/icon.ico", "icons/128x128.png", "icons/128x128@2x.png"],
+    "windows": {
+      "wix": {
+        "language": ["en-US", "ru-RU"]
+      }
+    }
+  }
+}

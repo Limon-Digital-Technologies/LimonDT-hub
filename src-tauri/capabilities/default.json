@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for the Limon Hub main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-save",
+    "fs:allow-write-file",
+    "process:allow-restart",
+    "updater:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://api.github.com/repos/Limon-Digital-Technologies/LimonDT-hub/releases?per_page=100"
+        },
+        {
+          "url": "https://github.com/Limon-Digital-Technologies/LimonDT-hub/releases/download/**"
+        },
+        {
+          "url": "https://release-assets.githubusercontent.com/**"
+        }
+      ]
+    }
+  ]
+}

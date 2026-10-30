@@ -1,0 +1,72 @@
+name: Publish Limon Calculator
+
+on:
+  push:
+    tags:
+      - "calculator-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/Limon-Calculator/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/Limon-Calculator
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $config = Get-Content "apps/Limon-Calculator/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -ne "calculator-v$($config.version)") {
+            throw "Release tag must match the Calculator version: calculator-v$($config.version)."
+          }
+
+      - name: Build and publish calculator release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/Limon-Calculator
+          tagName: calculator-v__VERSION__
+          releaseName: Limon Calculator v__VERSION__
+          releaseBody: Download the Windows installer from the release assets.
+          releaseDraft: false
+          prerelease: true
+          args: --bundles msi
+
+      - name: Prepare stable download names and checksum
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "apps/Limon-Calculator/src-tauri/target/release/bundle/msi/*.msi" |
+            Sort-Object Name |
+            Select-Object -First 1
+          if (-not $installer) { throw "Tauri did not produce an MSI installer." }
+
+          $releaseName = "Limon-Calculator-windows-x64.msi"
+          Copy-Item $installer.FullName $releaseName
+          $hash = (Get-FileHash $releaseName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -NoNewline "$releaseName.sha256" "$hash  $releaseName"
+
+      - name: Upload calculator assets to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            Limon-Calculator-windows-x64.msi
+            Limon-Calculator-windows-x64.msi.sha256
+          fail_on_unmatched_files: true
