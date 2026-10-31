@@ -1,6 +1,6 @@
 [package]
 name = "limon-calculator"
-version = "1.0.0"
+version = "1.0.1"
 description = "Limon Calculator desktop application"
 authors = ["Limon Digital Technologies"]
 edition = "2021"

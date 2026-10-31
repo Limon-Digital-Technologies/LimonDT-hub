@@ -18,7 +18,7 @@ export const apps = [
     assetName: "Limon-Calculator-windows-x64.msi",
     checksumName: "Limon-Calculator-windows-x64.msi.sha256",
     fileName: "Limon-Calculator-windows-x64.msi",
-    version: "1.0.0",
+    version: "1.0.1",
   },
 ];
 

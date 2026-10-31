@@ -63,7 +63,12 @@ jobs:
           $releaseName = "Limon-Calculator-windows-x64.msi"
           Copy-Item $installer.FullName $releaseName
           $hash = (Get-FileHash $releaseName -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -NoNewline "$releaseName.sha256" "$hash  $releaseName"
+          $checksumPath = Join-Path (Get-Location) ($releaseName + ".sha256")
+          [System.IO.File]::WriteAllText($checksumPath, "$hash  $releaseName", [System.Text.UTF8Encoding]::new($false))
+          if (-not (Test-Path -LiteralPath $checksumPath)) {
+            throw "Failed to write the MSI checksum file."
+          }
+          Get-Item -LiteralPath $releaseName, $checksumPath | Select-Object Name, Length
 
       - name: Upload calculator assets to the release
         uses: softprops/action-gh-release@v2

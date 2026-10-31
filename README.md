@@ -44,7 +44,7 @@ Enable the Email provider in Supabase Auth. If email confirmation is required, u
 Create a **public** organization repository named `LimonDT-hub`, then push this project to its root. Public releases let the Hub download selected apps without embedding a GitHub token. The code and release assets will be public.
 
 - Publish the Hub by updating its version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, refreshing `package-lock.json` with `npm install --package-lock-only`, and running `cargo check --manifest-path src-tauri/Cargo.toml`. Then push a matching `hub-v<version>` tag (first version: `hub-v0.2.0`). The workflow builds a Windows MSI and publishes the signed updater metadata.
-- The standalone app source is also in `apps/Limon-Calculator/`. Copy that directory's contents to the root of the public `Limon-Digital-Technologies/LimonDT-Calculator` repository (preserve its existing `LICENSE`). Its root `.github/workflows/release.yml` builds and publishes the app when a matching `v<version>` tag is pushed (first tag: `v1.0.0`). The workflow attaches a Windows MSI and SHA-256 checksum to a stable app release.
+- The standalone app source is also in `apps/Limon-Calculator/`. Copy that directory's contents to the root of the public `Limon-Digital-Technologies/LimonDT-Calculator` repository (preserve its existing `LICENSE`). Its root `.github/workflows/release.yml` builds and publishes the app when a matching `v<version>` tag is pushed (first usable release: `v1.0.1`). The workflow attaches a Windows MSI and SHA-256 checksum to a stable app release.
 - Users download only the Hub MSI first. From the Hub, they can download only the app they choose.
 
 ### Enable signed Hub auto-updates
