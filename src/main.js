@@ -202,9 +202,8 @@ async function downloadApp(app) {
       throw new Error("Публичный GitHub-репозиторий или релизы приложений ещё не опубликованы.");
     }
     if (!releaseResponse.ok) throw new Error(`GitHub API ответил с кодом ${releaseResponse.status}.`);
-    const releases = await releaseResponse.json();
-    const release = releases.find((item) => !item.draft && item.tag_name?.startsWith(app.releaseTagPrefix));
-    if (!release) throw new Error("Релиз калькулятора ещё не опубликован.");
+    const release = await releaseResponse.json();
+    if (release.draft || release.prerelease) throw new Error("Последний релиз приложения ещё не опубликован как стабильный.");
     const asset = release.assets?.find((item) => item.name === app.assetName);
     const checksumAsset = release.assets?.find((item) => item.name === app.checksumName);
     if (!asset || !checksumAsset) {

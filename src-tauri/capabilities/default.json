@@ -13,10 +13,10 @@
       "identifier": "http:default",
       "allow": [
         {
-          "url": "https://api.github.com/repos/Limon-Digital-Technologies/LimonDT-hub/releases?per_page=100"
+          "url": "https://api.github.com/repos/Limon-Digital-Technologies/LimonDT-Calculator/releases/latest"
         },
         {
-          "url": "https://github.com/Limon-Digital-Technologies/LimonDT-hub/releases/download/**"
+          "url": "https://github.com/Limon-Digital-Technologies/LimonDT-Calculator/releases/download/**"
         },
         {
           "url": "https://release-assets.githubusercontent.com/**"

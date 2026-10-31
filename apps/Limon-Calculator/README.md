@@ -18,13 +18,14 @@ npm run tauri -- build
 
 The MSI is written under `src-tauri/target/release/bundle/msi/`.
 
-## Publish from the shared ecosystem repository
+## Publish from the standalone repository
 
-The app is released from the public `Limon-Digital-Technologies/LimonDT-hub` repository. The root workflow builds it when a version tag is pushed:
+The app is released from the public `Limon-Digital-Technologies/LimonDT-Calculator` repository. Copy the contents of this directory to that repository's root, preserving its existing `LICENSE`. The root workflow builds and publishes an MSI when a version tag is pushed:
 
 ```powershell
-git tag calculator-v1.0.0
-git push origin calculator-v1.0.0
+git tag v1.0.0
+git push origin main
+git push origin v1.0.0
 ```
 
-GitHub Actions publishes `Limon-Calculator-windows-x64.msi` and its SHA-256 checksum to a separate prerelease. The Hub finds the latest `calculator-v*` release, verifies the installer, and adds it to the signed-in user's library.
+GitHub Actions publishes `Limon-Calculator-windows-x64.msi` and its SHA-256 checksum to the stable release. The Hub verifies the installer and adds it to the signed-in user's library.

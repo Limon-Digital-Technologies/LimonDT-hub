@@ -3,7 +3,7 @@ name: Publish Limon Calculator
 on:
   push:
     tags:
-      - "calculator-v*"
+      - "v*"
 
 permissions:
   contents: write
@@ -23,17 +23,20 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/Limon-Calculator/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix apps/Limon-Calculator
+        run: npm ci
 
       - name: Validate release tag
         shell: pwsh
         run: |
-          $config = Get-Content "apps/Limon-Calculator/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-          if ($env:GITHUB_REF_NAME -ne "calculator-v$($config.version)") {
-            throw "Release tag must match the Calculator version: calculator-v$($config.version)."
+          $package = Get-Content "package.json" -Raw | ConvertFrom-Json
+          $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          if ($package.version -ne $config.version) {
+            throw "package.json and Tauri versions must match."
+          }
+          if ($env:GITHUB_REF_NAME -ne "v$($config.version)") {
+            throw "Release tag must match the Calculator version: v$($config.version)."
           }
 
       - name: Build and publish calculator release
@@ -41,18 +44,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: apps/Limon-Calculator
-          tagName: calculator-v__VERSION__
+          tagName: v__VERSION__
           releaseName: Limon Calculator v__VERSION__
           releaseBody: Download the Windows installer from the release assets.
           releaseDraft: false
-          prerelease: true
+          prerelease: false
+          generateReleaseNotes: true
           args: --bundles msi
 
       - name: Prepare stable download names and checksum
         shell: pwsh
         run: |
-          $installer = Get-ChildItem "apps/Limon-Calculator/src-tauri/target/release/bundle/msi/*.msi" |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" |
             Sort-Object Name |
             Select-Object -First 1
           if (-not $installer) { throw "Tauri did not produce an MSI installer." }
