@@ -1,6 +1,5 @@
 import "./styles.css";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { appCacheDir, join } from "@tauri-apps/api/path";
 import { BaseDirectory, mkdir, writeFile } from "@tauri-apps/plugin-fs";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -260,8 +259,7 @@ async function installApp(app) {
       await writeFile(`${installerDirectory}/${app.fileName}`, installerBytes, {
         baseDir: BaseDirectory.AppCache,
       });
-      const installerPath = await join(await appCacheDir(), installerDirectory, app.fileName);
-      await invoke("install_app", { appId: app.id, installerPath });
+      await invoke("install_app", { appId: app.id });
       await refreshInstalledApps();
       if (!state.installedApps.has(app.id)) {
         throw new Error("Установщик завершился, но Windows не подтвердила установку приложения.");

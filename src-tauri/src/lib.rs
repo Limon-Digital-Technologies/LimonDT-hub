@@ -31,56 +31,79 @@ fn get_installed_apps() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-async fn install_app(
-    app: tauri::AppHandle,
-    app_id: String,
-    installer_path: String,
-) -> Result<(), String> {
+async fn install_app(app: tauri::AppHandle, app_id: String) -> Result<(), String> {
     ensure_supported_app(&app_id)?;
 
     #[cfg(target_os = "windows")]
     {
-        use std::{fs, path::PathBuf, process::Command};
+        use std::{fs, io::Read, process::Command};
         use tauri::Manager;
 
         let cache_dir = app
             .path()
             .app_cache_dir()
             .map_err(|error| format!("Не удалось открыть папку кэша хаба: {error}"))?;
-        let expected_path = cache_dir
+        let cached_installer = cache_dir
             .join("installers")
             .join("Limon-Calculator-windows-x64.msi");
-        let installer_path = PathBuf::from(installer_path);
         let canonical_cache = fs::canonicalize(&cache_dir)
             .map_err(|error| format!("Не удалось проверить папку кэша хаба: {error}"))?;
-        let canonical_installer = fs::canonicalize(&installer_path)
+        let canonical_cached_installer = fs::canonicalize(&cached_installer)
             .map_err(|error| format!("Не удалось найти скачанный установщик: {error}"))?;
-        if canonical_installer != expected_path
-            && canonical_installer
-                != fs::canonicalize(&expected_path)
-                    .map_err(|error| format!("Не удалось проверить MSI: {error}"))?
+        if !canonical_cached_installer.starts_with(canonical_cache)
+            || !canonical_cached_installer.is_file()
         {
-            return Err("Путь установщика не совпадает с ожидаемым MSI приложения.".to_string());
-        }
-        if !canonical_installer.starts_with(canonical_cache) || !canonical_installer.is_file() {
             return Err("Установщик должен находиться в кэше Limon Hub.".to_string());
         }
+
+        let mut package = fs::File::open(&canonical_cached_installer)
+            .map_err(|error| format!("Не удалось прочитать скачанный MSI: {error}"))?;
+        let mut header = [0; 8];
+        package
+            .read_exact(&mut header)
+            .map_err(|error| format!("Скачанный файл MSI неполный: {error}"))?;
+        if !is_msi_file_header(&header) {
+            return Err("Скачанный файл не является установщиком Windows MSI.".to_string());
+        }
+
+        let downloads_dir = app
+            .path()
+            .download_dir()
+            .map_err(|error| format!("Не удалось открыть папку «Загрузки»: {error}"))?
+            .join("Limon Hub");
+        fs::create_dir_all(&downloads_dir)
+            .map_err(|error| format!("Не удалось создать папку установщиков: {error}"))?;
+        let installer_path = downloads_dir.join("Limon-Calculator-windows-x64.msi");
+        fs::copy(&canonical_cached_installer, &installer_path)
+            .map_err(|error| format!("Не удалось сохранить MSI в папку «Загрузки»: {error}"))?;
+        let installer_path = fs::canonicalize(&installer_path)
+            .map_err(|error| format!("Не удалось проверить MSI в папке «Загрузки»: {error}"))?;
+        let log_path = downloads_dir.join("Limon-Calculator-install.log");
 
         let status = tauri::async_runtime::spawn_blocking(move || {
             Command::new("msiexec.exe")
                 .args(["/i"])
-                .arg(canonical_installer)
+                .arg(&installer_path)
+                .args(["/L*v"])
+                .arg(&log_path)
                 .status()
+                .map(|status| (status, installer_path, log_path))
         })
         .await
         .map_err(|error| format!("Не удалось запустить установщик: {error}"))?
         .map_err(|error| format!("Не удалось запустить Windows Installer: {error}"))?;
+        let (status, installer_path, log_path) = status;
 
         if status.success() || status.code() == Some(3010) {
             return Ok(());
         }
         return Err(match status.code() {
             Some(1602) => "Установка отменена.".to_string(),
+            Some(1619) => format!(
+                "Windows Installer не смог открыть пакет. MSI сохранён в «Загрузки\\Limon Hub»: {}. Журнал: {}",
+                installer_path.display(),
+                log_path.display()
+            ),
             Some(code) => format!("Установщик завершился с кодом {code}."),
             None => "Установщик завершился без кода результата.".to_string(),
         });
@@ -153,6 +176,25 @@ fn ensure_supported_app(app_id: &str) -> Result<(), String> {
     }
 }
 
+fn is_msi_file_header(header: &[u8; 8]) -> bool {
+    header == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
+}
+
+#[cfg(test)]
+mod msi_tests {
+    use super::is_msi_file_header;
+
+    #[test]
+    fn accepts_compound_file_msi_signature() {
+        assert!(is_msi_file_header(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"));
+    }
+
+    #[test]
+    fn rejects_non_msi_downloads() {
+        assert!(!is_msi_file_header(b"<html>40"));
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn calculator_install_dir() -> Result<Option<std::path::PathBuf>, String> {
     use std::{path::PathBuf, process::Command};
@@ -191,9 +233,7 @@ fn calculator_executable() -> Result<Option<std::path::PathBuf>, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn calculator_product_code(
-    install_dir: &std::path::Path,
-) -> Result<Option<String>, String> {
+fn calculator_product_code(install_dir: &std::path::Path) -> Result<Option<String>, String> {
     use std::process::Command;
 
     const UNINSTALL_KEYS: [&str; 3] = [
@@ -219,8 +259,7 @@ fn calculator_product_code(
         for line in stdout.lines().chain(std::iter::once("")) {
             let line = line.trim();
             if line.starts_with("HKEY_") || line.is_empty() {
-                if display_name == "Limon Calculator"
-                    && paths_match(&install_location, install_dir)
+                if display_name == "Limon Calculator" && paths_match(&install_location, install_dir)
                 {
                     if let Some(product_code) = current_key.rsplit('\\').next() {
                         if is_msi_product_code(product_code) {
@@ -261,7 +300,10 @@ fn paths_match(registry_path: &str, install_dir: &std::path::Path) -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_msi_product_code(value: &str) -> bool {
-    let Some(guid) = value.strip_prefix('{').and_then(|value| value.strip_suffix('}')) else {
+    let Some(guid) = value
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+    else {
         return false;
     };
     guid.len() == 36
