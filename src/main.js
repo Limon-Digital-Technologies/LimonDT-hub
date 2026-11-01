@@ -1,13 +1,12 @@
 import "./styles.css";
-import { isTauri } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { appCacheDir, join } from "@tauri-apps/api/path";
+import { BaseDirectory, mkdir, writeFile } from "@tauri-apps/plugin-fs";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import packageJson from "../package.json";
-import { apps } from "./data/catalog.js";
-import { applyCalculatorInput, createCalculatorState } from "../apps/Limon-Calculator/src/calculator-engine.js";
+import { fetchAppCatalog } from "./data/app-catalog.js";
 import { supabase, supabaseConfigError } from "./lib/supabase.js";
 import { renderApp, renderAuth } from "./ui/render.js";
 
@@ -18,10 +17,13 @@ const defaultSettings = { animations: true, compact: false };
 const state = {
   activePage: "home",
   query: "",
+  apps: [],
+  catalogLoading: false,
+  catalogError: null,
   installedApps: new Set(),
-  downloadingApps: new Set(),
+  installingApps: new Set(),
+  uninstallingApps: new Set(),
   downloads: [],
-  calculator: createCalculatorState(),
   settings: { ...defaultSettings },
   user: null,
   authLoading: true,
@@ -48,9 +50,7 @@ function loadPreferences(userId) {
     if (stored !== null) localStorage.setItem(key, stored);
   }
   const preferences = stored ? JSON.parse(stored) : {};
-  const knownApps = new Set(apps.map((app) => app.id));
-  state.installedApps = new Set((preferences.installedApps || []).filter((id) => knownApps.has(id)));
-  state.downloads = (preferences.downloads || []).filter((item) => knownApps.has(item.id));
+  state.downloads = preferences.downloads || [];
   state.settings = {
     animations: preferences.settings?.animations ?? defaultSettings.animations,
     compact: preferences.settings?.compact ?? defaultSettings.compact,
@@ -62,7 +62,6 @@ function persistPreferences() {
   localStorage.setItem(
     preferencesKey(state.user.id),
     JSON.stringify({
-      installedApps: [...state.installedApps],
       downloads: state.downloads,
       settings: state.settings,
     }),
@@ -96,6 +95,7 @@ function render({ keepScroll = false } = {}) {
   const scrollTop = root.querySelector(".workspace-scroll")?.scrollTop ?? 0;
   root.innerHTML = renderApp({
     ...state,
+    catalogError: state.catalogError?.message ?? null,
     user: state.user,
     updateAvailableVersion: state.availableUpdate?.version ?? null,
     version: packageJson.version,
@@ -108,32 +108,48 @@ function render({ keepScroll = false } = {}) {
     button.classList.toggle("is-on", value);
     button.setAttribute("aria-checked", String(value));
   });
-  if (state.activePage === "calculator") updateCalculatorDisplay();
 }
 
 function showToast(message) {
   const region = root.querySelector(".toast-region");
   if (!region) return;
-  region.innerHTML = `<div class="toast">${message}</div>`;
-  window.setTimeout(() => region.querySelector(".toast")?.classList.add("toast--leaving"), 2400);
-  window.setTimeout(() => { region.innerHTML = ""; }, 2800);
-}
-
-function updateCalculatorDisplay() {
-  const display = root.querySelector("[data-calculator-display]");
-  const expression = root.querySelector("[data-calculator-expression]");
-  if (!display || !expression) return;
-  display.textContent = state.calculator.display;
-  expression.textContent = state.calculator.expression;
-}
-
-function inputCalculator(action, value) {
-  applyCalculatorInput(state.calculator, action, value);
-  updateCalculatorDisplay();
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = message;
+  region.replaceChildren(toast);
+  window.setTimeout(() => toast.classList.add("toast--leaving"), 2400);
+  window.setTimeout(() => {
+    if (toast.parentElement === region) region.replaceChildren();
+  }, 2800);
 }
 
 function fetchAppResource(url, options) {
   return isTauri() ? tauriFetch(url, options) : fetch(url, options);
+}
+
+async function loadAppCatalog() {
+  state.catalogLoading = true;
+  state.catalogError = null;
+  render();
+  try {
+    state.apps = await fetchAppCatalog(supabase);
+  } catch (error) {
+    state.catalogError = error;
+    state.apps = [];
+  } finally {
+    state.catalogLoading = false;
+    render();
+  }
+}
+
+async function refreshInstalledApps() {
+  if (!isTauri()) {
+    state.installedApps = new Set();
+    return;
+  }
+  const installedIds = await invoke("get_installed_apps");
+  const knownApps = new Set(state.apps.map((app) => app.id));
+  state.installedApps = new Set(installedIds.filter((id) => knownApps.has(id)));
 }
 
 async function checkForUpdates({ automatic = false } = {}) {
@@ -190,14 +206,16 @@ async function installHubUpdate() {
   }
 }
 
-async function downloadApp(app) {
-  if (state.downloadingApps.has(app.id)) return;
-  state.downloadingApps.add(app.id);
+async function installApp(app) {
+  if (state.installingApps.has(app.id)) return;
+  state.installingApps.add(app.id);
   render({ keepScroll: true });
 
   let notification;
+  let operation = "скачать";
   try {
-    const releaseResponse = await fetchAppResource(app.releaseApi);
+    const releaseApi = `https://api.github.com/repos/${app.repository}/releases/latest`;
+    const releaseResponse = await fetchAppResource(releaseApi);
     if (releaseResponse.status === 404) {
       throw new Error("Публичный GitHub-репозиторий или релизы приложений ещё не опубликованы.");
     }
@@ -236,15 +254,18 @@ async function downloadApp(app) {
     if (actualHash !== expectedHash) throw new Error("Контрольная сумма установщика не совпадает. Файл не сохранён.");
 
     if (isTauri()) {
-      const path = await save({
-        defaultPath: app.fileName,
-        filters: [{ name: "Установщик Windows", extensions: ["msi"] }],
+      operation = "установить";
+      const installerDirectory = "installers";
+      await mkdir(installerDirectory, { baseDir: BaseDirectory.AppCache, recursive: true });
+      await writeFile(`${installerDirectory}/${app.fileName}`, installerBytes, {
+        baseDir: BaseDirectory.AppCache,
       });
-      if (!path) {
-        notification = "Скачивание отменено.";
-        return;
+      const installerPath = await join(await appCacheDir(), installerDirectory, app.fileName);
+      await invoke("install_app", { appId: app.id, installerPath });
+      await refreshInstalledApps();
+      if (!state.installedApps.has(app.id)) {
+        throw new Error("Установщик завершился, но Windows не подтвердила установку приложения.");
       }
-      await writeFile(path, installerBytes);
     } else {
       const url = URL.createObjectURL(new Blob([installerBytes], { type: "application/octet-stream" }));
       const link = document.createElement("a");
@@ -259,21 +280,51 @@ async function downloadApp(app) {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    state.installedApps.add(app.id);
     state.downloads.push({
       id: app.id,
       fileName: app.fileName,
       downloadedAt: new Date().toISOString(),
-      ...(isTauri() ? { path: "Сохранён через диалог выбора файла" } : {}),
     });
-    state.activePage = "library";
+    if (isTauri()) state.activePage = "library";
     state.query = "";
     persistPreferences();
-    notification = `Установщик ${app.name} скачан и добавлен в библиотеку. Откройте MSI, чтобы установить приложение.`;
+    notification = isTauri()
+      ? `${app.name} установлен. Теперь его можно запускать из хаба.`
+      : `Установщик ${app.name} скачан. Запустите MSI, чтобы установить приложение.`;
   } catch (error) {
-    notification = `Не удалось скачать ${app.name}: ${error.message}`;
+    notification = `Не удалось ${operation} ${app.name}: ${error.message}`;
   } finally {
-    state.downloadingApps.delete(app.id);
+    state.installingApps.delete(app.id);
+    render();
+    if (notification) showToast(notification);
+  }
+}
+
+async function launchInstalledApp(app) {
+  try {
+    await invoke("launch_app", { appId: app.id });
+  } catch (error) {
+    render();
+    showToast(`Не удалось запустить ${app.name}: ${error.message}`);
+  }
+}
+
+async function uninstallInstalledApp(app) {
+  if (state.uninstallingApps.has(app.id)) return;
+  state.uninstallingApps.add(app.id);
+  render({ keepScroll: true });
+  let notification;
+  try {
+    await invoke("uninstall_app", { appId: app.id });
+    await refreshInstalledApps();
+    if (state.installedApps.has(app.id)) {
+      throw new Error("Windows всё ещё сообщает, что приложение установлено.");
+    }
+    notification = `${app.name} удалён.`;
+  } catch (error) {
+    notification = `Не удалось удалить ${app.name}: ${error.message}`;
+  } finally {
+    state.uninstallingApps.delete(app.id);
     render();
     if (notification) showToast(notification);
   }
@@ -374,34 +425,36 @@ root.addEventListener("click", async (event) => {
     event.preventDefault();
     state.activePage = target.dataset.page;
     state.query = "";
+    try {
+      await refreshInstalledApps();
+    } catch (error) {
+      render();
+      showToast(`Не удалось проверить установленные приложения: ${error.message}`);
+      return;
+    }
     render();
+    return;
+  }
+
+  if (target.hasAttribute("data-catalog-retry")) {
+    void loadAppCatalog().then(refreshInstalledApps).then(render).catch((error) => {
+      render();
+      showToast(`Не удалось обновить библиотеку: ${error.message}`);
+    });
     return;
   }
 
   if (target.dataset.appAction) {
-    const app = apps.find((item) => item.id === target.dataset.appAction);
+    const app = state.apps.find((item) => item.id === target.dataset.appAction);
     if (!app) return;
-    if (target.dataset.action === "download" && !state.installedApps.has(app.id)) {
-      void downloadApp(app);
-    } else if (state.installedApps.has(app.id)) {
-      state.activePage = app.id;
-      state.calculator = createCalculatorState();
-      render();
-    }
+    if (target.dataset.action === "install" && !state.installedApps.has(app.id)) void installApp(app);
+    else if (target.dataset.action === "launch" && state.installedApps.has(app.id)) void launchInstalledApp(app);
     return;
   }
 
   if (target.dataset.removeApp) {
-    const app = apps.find((item) => item.id === target.dataset.removeApp);
-    state.installedApps.delete(target.dataset.removeApp);
-    persistPreferences();
-    render();
-    if (app) showToast(`${app.name} удалён из библиотеки`);
-    return;
-  }
-
-  if (target.dataset.calculatorAction) {
-    inputCalculator(target.dataset.calculatorAction, target.dataset.value);
+    const app = state.apps.find((item) => item.id === target.dataset.removeApp);
+    if (app && state.installedApps.has(app.id)) void uninstallInstalledApp(app);
     return;
   }
 
@@ -444,15 +497,6 @@ root.addEventListener("input", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (!state.user) return;
-  if (state.activePage === "calculator" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-    const focusedInput = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
-    if (!focusedInput && /^\d$/.test(event.key)) inputCalculator("digit", event.key);
-    else if (!focusedInput && event.key === ".") inputCalculator("decimal");
-    else if (!focusedInput && ["+", "-", "*", "/"].includes(event.key)) inputCalculator("operator", event.key);
-    else if (!focusedInput && (event.key === "Enter" || event.key === "=")) inputCalculator("equals");
-    else if (!focusedInput && event.key === "Backspace") inputCalculator("delete");
-    else if (!focusedInput && event.key === "Escape") inputCalculator("clear");
-  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     root.querySelector("#catalog-search")?.focus();
@@ -468,11 +512,20 @@ if (supabase) {
     const nextUser = session?.user || null;
     const previousId = state.user?.id;
     state.user = nextUser ? userProfile(nextUser) : null;
-    if (state.user && state.user.id !== previousId) loadPreferences(state.user.id);
+    if (state.user && state.user.id !== previousId) {
+      loadPreferences(state.user.id);
+      void loadAppCatalog().then(refreshInstalledApps).then(render).catch((error) => {
+        render();
+        showToast(`Не удалось проверить приложения на этом устройстве: ${error.message}`);
+      });
+    }
     if (!state.user && previousId) {
       state.activePage = "home";
       state.query = "";
       state.installedApps = new Set();
+      state.apps = [];
+      state.catalogLoading = false;
+      state.catalogError = null;
       state.downloads = [];
       state.settings = { ...defaultSettings };
     }

@@ -27,43 +27,50 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Validate updater signing configuration
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            throw "Add the private signing key as the TAURI_SIGNING_PRIVATE_KEY repository secret."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY)) {
-            throw "Add the public signing key as the TAURI_UPDATER_PUBLIC_KEY repository variable."
-          }
+      - name: Run Hub tests
+        run: npm test
 
-          $configPath = "src-tauri/tauri.conf.json"
-          $config = Get-Content $configPath -Raw | ConvertFrom-Json
-          if ($env:GITHUB_REF_NAME -ne "hub-v$($config.version)") {
-            throw "Release tag must match the Hub version: hub-v$($config.version)."
-          }
-          $config.bundle.createUpdaterArtifacts = $true
-          $config.plugins.updater.pubkey = $env:TAURI_UPDATER_PUBLIC_KEY
-          $json = ConvertTo-Json $config -Depth 100
-          [System.IO.File]::WriteAllText($configPath, $json, [System.Text.UTF8Encoding]::new($false))
-
-      - name: Publish signed Windows release
+      - name: Publish Windows release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          VITE_UPDATER_ENABLED: "true"
+          VITE_UPDATER_ENABLED: "false"
         with:
           tagName: hub-v__VERSION__
           releaseName: Limon Hub v__VERSION__
-          releaseBody: Download the Windows installer from the release assets.
+          releaseBody: |
+            ## Install Limon Hub on Windows
+
+            [Download Limon-Hub-windows-x64.msi](https://github.com/Limon-Digital-Technologies/LimonDT-hub/releases/latest/download/Limon-Hub-windows-x64.msi), open the downloaded file, and follow the Windows Installer prompts.
+
+            The Hub is separate from the apps in its catalog. Install only the apps you choose from inside the Hub.
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
-          uploadUpdaterJson: true
-          updaterJsonPreferNsis: false
           args: --bundles msi
+
+      - name: Add direct-download installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter "*.msi" |
+            Where-Object { $_.Name -match "_en-US\.msi$" } |
+            Select-Object -First 1
+          if (-not $installer) {
+            $installer = Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter "*.msi" |
+              Select-Object -First 1
+          }
+          if (-not $installer) {
+            throw "Tauri did not produce a Windows MSI."
+          }
+
+          $downloadName = "Limon-Hub-windows-x64.msi"
+          Copy-Item $installer.FullName $downloadName
+          $hash = (Get-FileHash $downloadName -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText(
+            "$downloadName.sha256",
+            "$hash  $downloadName",
+            [System.Text.Encoding]::ASCII
+          )
+          gh release upload $env:GITHUB_REF_NAME $downloadName "$downloadName.sha256" --clobber

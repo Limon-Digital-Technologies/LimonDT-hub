@@ -5,18 +5,20 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "dialog:allow-save",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
     "fs:allow-write-file",
+    "fs:scope-appcache-recursive",
     "process:allow-restart",
     "updater:default",
     {
       "identifier": "http:default",
       "allow": [
         {
-          "url": "https://api.github.com/repos/Limon-Digital-Technologies/LimonDT-Calculator/releases/latest"
+          "url": "https://api.github.com/repos/Limon-Digital-Technologies/**/releases/latest"
         },
         {
-          "url": "https://github.com/Limon-Digital-Technologies/LimonDT-Calculator/releases/download/**"
+          "url": "https://github.com/Limon-Digital-Technologies/**/releases/download/**"
         },
         {
           "url": "https://release-assets.githubusercontent.com/**"

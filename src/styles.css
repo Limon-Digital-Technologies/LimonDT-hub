@@ -123,11 +123,10 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .app-card__category { color: #9aa1ad; font-size: 9px; }
 .app-card h3 { margin: 4px 0 4px; font-family: Manrope, sans-serif; font-size: 13px; font-weight: 700; letter-spacing: -.3px; }
 .app-card p { margin: 0; color: #9299a5; font-size: 10px; line-height: 1.55; }
-.app-card__actions { display: flex; align-items: center; gap: 8px; }
+.app-card__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .app-card__actions .button { min-height: 31px; }
 .app-version, .download-status { padding: 5px 7px; border-radius: 6px; background: #f4f6fa; color: #8e97a5; font-size: 9px; }
 .download-status { margin-left: auto; background: #e9f7ef; color: #328356; }
-.remove-app-button { margin-left: auto; }
 .hub-overview { display: grid; max-width: 744px; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 24px; }
 .overview-card { display: flex; min-height: 76px; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid #edf0f4; border-radius: 11px; background: #fff; text-align: left; cursor: pointer; transition: border-color .18s, transform .18s, box-shadow .18s; }
 .overview-card:hover { transform: translateY(-2px); border-color: #dfe8f5; box-shadow: 0 7px 17px rgba(30,51,84,.06); }
@@ -143,24 +142,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .page-intro h1 { margin: 8px 0 6px; font-family: Manrope, "Segoe UI", sans-serif; font-size: 30px; font-weight: 700; letter-spacing: -1.1px; }
 .page-intro p { margin: 0; color: #8f96a2; font-size: 12px; }
 .catalog-toolbar { display: flex; min-height: 39px; align-items: center; justify-content: space-between; margin-bottom: 15px; color: #949ba7; font-size: 10px; }
-.calculator-intro { margin-bottom: 18px; }
-.back-button { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 17px; padding: 0; border: 0; background: transparent; color: #4775b8; font-size: 10px; cursor: pointer; }
-.back-button .icon { width: 14px; height: 14px; transform: rotate(180deg); }
-.calculator { width: min(100%, 340px); padding: 18px; border: 1px solid #edf0f4; border-radius: 15px; background: white; box-shadow: 0 8px 25px rgba(27,39,68,.05); }
-.calculator-display { display: flex; min-height: 97px; flex-direction: column; justify-content: flex-end; align-items: flex-end; gap: 7px; overflow: hidden; padding: 8px 7px 15px; }
-.calculator-expression { min-height: 16px; color: #929aaa; font-size: 11px; }
-.calculator-value { width: 100%; overflow: hidden; color: #252b37; font-size: clamp(32px, 8vw, 44px); font-variant-numeric: tabular-nums; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
-.calculator-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.calculator-key { min-height: 49px; border: 0; border-radius: 11px; background: #f2f4f8; color: #303746; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform .15s, background .15s; }
-.calculator-key:hover { transform: translateY(-1px); background: #e8edf5; }
-.calculator-key:active { transform: scale(.97); }
-.calculator-key.utility { background: #e9eef6; color: #536176; }
-.calculator-key.operator { background: #e8f0ff; color: #2464cb; }
-.calculator-key.operator:hover { background: #dce9ff; }
-.calculator-key.calculator-key--zero { grid-column: span 2; }
-.calculator-key[data-calculator-action="equals"] { background: #1769e8; color: white; }
-.calculator-key[data-calculator-action="equals"]:hover { background: #0d58cc; }
-.calculator-hint { margin: 13px 0 0; color: #929aaa; font-size: 9px; text-align: center; }
 .empty-state { display: flex; min-height: 320px; flex-direction: column; align-items: center; justify-content: center; padding: 25px; text-align: center; }
 .empty-state__icon { display: grid; width: 60px; height: 60px; place-items: center; border-radius: 18px; background: #f1f5fb; color: #6f8fc2; }
 .empty-state__icon .icon { width: 25px; height: 25px; }
