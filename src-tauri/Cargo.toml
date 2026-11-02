@@ -1,6 +1,6 @@
 [package]
 name = "limon-digital-tech-hub"
-version = "0.3.1"
+version = "0.3.2"
 description = "Limon Digital Technologies workspace hub"
 authors = ["Limon Digital Technologies"]
 edition = "2021"

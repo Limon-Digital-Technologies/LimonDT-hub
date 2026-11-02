@@ -13,6 +13,7 @@ const root = document.querySelector("#app");
 const updaterEnabled = import.meta.env.VITE_UPDATER_ENABLED === "true";
 const legacyStorageKey = "limon-hub-preferences";
 const defaultSettings = { animations: true, compact: false };
+const maxInstallerBytes = 100 * 1024 * 1024;
 const state = {
   activePage: "home",
   query: "",
@@ -21,6 +22,7 @@ const state = {
   catalogError: null,
   installedApps: new Set(),
   installingApps: new Set(),
+  installStatuses: new Map(),
   uninstallingApps: new Set(),
   downloads: [],
   settings: { ...defaultSettings },
@@ -95,6 +97,7 @@ function render({ keepScroll = false } = {}) {
   root.innerHTML = renderApp({
     ...state,
     catalogError: state.catalogError?.message ?? null,
+    installStatuses: state.installStatuses,
     user: state.user,
     updateAvailableVersion: state.availableUpdate?.version ?? null,
     version: packageJson.version,
@@ -208,42 +211,54 @@ async function installHubUpdate() {
 async function installApp(app) {
   if (state.installingApps.has(app.id)) return;
   state.installingApps.add(app.id);
+  state.installStatuses.set(app.id, "Подключаемся к GitHub…");
   render({ keepScroll: true });
 
   let notification;
   let operation = "скачать";
   try {
-    const releaseApi = `https://api.github.com/repos/${app.repository}/releases/latest`;
-    const releaseResponse = await fetchAppResource(releaseApi);
-    if (releaseResponse.status === 404) {
-      throw new Error("Публичный GitHub-репозиторий или релизы приложений ещё не опубликованы.");
-    }
-    if (!releaseResponse.ok) throw new Error(`GitHub API ответил с кодом ${releaseResponse.status}.`);
-    const release = await releaseResponse.json();
-    if (release.draft || release.prerelease) throw new Error("Последний релиз приложения ещё не опубликован как стабильный.");
-    const asset = release.assets?.find((item) => item.name === app.assetName);
-    const checksumAsset = release.assets?.find((item) => item.name === app.checksumName);
-    if (!asset || !checksumAsset) {
-      throw new Error(`В последнем релизе отсутствуют ${app.assetName} или ${app.checksumName}.`);
-    }
-    if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 100 * 1024 * 1024) {
-      throw new Error("Размер установщика отсутствует или превышает ограничение в 100 МБ.");
-    }
-    const allowedDownloadPrefix = `https://github.com/${app.repository}/releases/download/`;
-    if (!asset.browser_download_url?.startsWith(allowedDownloadPrefix)
-      || !checksumAsset.browser_download_url?.startsWith(allowedDownloadPrefix)) {
-      throw new Error("GitHub вернул некорректный адрес установщика.");
-    }
+    const repositoryPath = app.repository.split("/").map(encodeURIComponent).join("/");
+    const releaseAssetUrl = (fileName) => (
+      `https://github.com/${repositoryPath}/releases/latest/download/${encodeURIComponent(fileName)}`
+    );
+    const installerUrl = releaseAssetUrl(app.assetName);
+    const checksumUrl = releaseAssetUrl(app.checksumName);
 
+    state.installStatuses.set(app.id, "Скачиваем установщик…");
+    render({ keepScroll: true });
     const [installerResponse, checksumResponse] = await Promise.all([
-      fetchAppResource(asset.browser_download_url),
-      fetchAppResource(checksumAsset.browser_download_url),
+      fetchAppResource(installerUrl),
+      fetchAppResource(checksumUrl),
     ]);
-    if (!installerResponse.ok) throw new Error(`Не удалось скачать установщик: HTTP ${installerResponse.status}.`);
-    if (!checksumResponse.ok) throw new Error(`Не удалось скачать контрольную сумму: HTTP ${checksumResponse.status}.`);
+    if (!installerResponse.ok) {
+      if (installerResponse.status === 404) {
+        throw new Error(`В последнем GitHub-релизе не найден файл ${app.assetName}.`);
+      }
+      throw new Error(`GitHub не отдал установщик: HTTP ${installerResponse.status}.`);
+    }
+    if (!checksumResponse.ok) {
+      throw new Error(`Не удалось скачать контрольную сумму: HTTP ${checksumResponse.status}.`);
+    }
+    state.installStatuses.set(app.id, "Проверяем файл и контрольную сумму…");
+    render({ keepScroll: true });
+    const contentLength = Number(installerResponse.headers.get("content-length"));
+    if (!Number.isSafeInteger(contentLength) || contentLength < 8 || contentLength > maxInstallerBytes) {
+      throw new Error("Размер установщика неизвестен или превышает ограничение 100 МБ.");
+    }
     const installerBytes = new Uint8Array(await installerResponse.arrayBuffer());
-    if (installerBytes.byteLength !== asset.size) {
-      throw new Error("Размер скачанного установщика не совпадает с размером релиза.");
+    if (installerBytes.byteLength > maxInstallerBytes) {
+      throw new Error("Установщик превышает ограничение 100 МБ.");
+    }
+    if (installerBytes.byteLength < 8
+      || installerBytes[0] !== 0xd0
+      || installerBytes[1] !== 0xcf
+      || installerBytes[2] !== 0x11
+      || installerBytes[3] !== 0xe0
+      || installerBytes[4] !== 0xa1
+      || installerBytes[5] !== 0xb1
+      || installerBytes[6] !== 0x1a
+      || installerBytes[7] !== 0xe1) {
+      throw new Error("GitHub вернул файл, который не является Windows MSI.");
     }
     const checksumText = await checksumResponse.text();
     const expectedHash = checksumText.trim().match(/^([a-f\d]{64})\s+/i)?.[1]?.toLowerCase();
@@ -254,6 +269,8 @@ async function installApp(app) {
 
     if (isTauri()) {
       operation = "установить";
+      state.installStatuses.set(app.id, "Запускаем установщик Windows…");
+      render({ keepScroll: true });
       const installerDirectory = "installers";
       await mkdir(installerDirectory, { baseDir: BaseDirectory.AppCache, recursive: true });
       await writeFile(`${installerDirectory}/${app.fileName}`, installerBytes, {
@@ -293,6 +310,7 @@ async function installApp(app) {
     notification = `Не удалось ${operation} ${app.name}: ${error.message}`;
   } finally {
     state.installingApps.delete(app.id);
+    state.installStatuses.delete(app.id);
     render();
     if (notification) showToast(notification);
   }
@@ -423,14 +441,12 @@ root.addEventListener("click", async (event) => {
     event.preventDefault();
     state.activePage = target.dataset.page;
     state.query = "";
-    try {
-      await refreshInstalledApps();
-    } catch (error) {
-      render();
-      showToast(`Не удалось проверить установленные приложения: ${error.message}`);
-      return;
-    }
     render();
+    if (state.activePage === "library" && isTauri()) {
+      void refreshInstalledApps().then(render).catch((error) => {
+        showToast(`Не удалось проверить установленные приложения: ${error.message}`);
+      });
+    }
     return;
   }
 

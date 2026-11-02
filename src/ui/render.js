@@ -10,8 +10,8 @@ function navButton(item, activePage, downloadCount) {
     </button>`;
 }
 
-function appCard(app, { installed = false, downloaded = false, installing = false, uninstalling = false, compact = false } = {}) {
-  const action = installing ? "Устанавливаем…" : installed ? "Запустить" : "Установить";
+function appCard(app, { installed = false, downloaded = false, installing = false, installStatus, uninstalling = false, compact = false } = {}) {
+  const action = installing ? installStatus || "Устанавливаем…" : installed ? "Запустить" : "Установить";
   const actionMarkup = `<button class="button button--primary app-action" data-app-action="${app.id}" data-action="${installed ? "launch" : "install"}" ${installing || uninstalling ? "disabled aria-busy=\"true\"" : ""}>${installing ? "" : icon(installed ? "arrow" : "download")} ${action}</button>`;
 
   return `
@@ -41,7 +41,7 @@ function pluralize(count, one, few, many) {
   return many;
 }
 
-function homePage({ apps, installedApps, downloads, installingApps, catalogLoading, catalogError }) {
+function homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError }) {
   const installedCount = installedApps.size;
   const downloadCount = downloads.length;
 
@@ -70,7 +70,7 @@ function homePage({ apps, installedApps, downloads, installingApps, catalogLoadi
         ? `<p class="catalog-notice">${escapeHtml(catalogError)} <button class="text-button" data-catalog-retry>Повторить</button></p>`
         : catalogLoading
           ? '<p class="catalog-notice">Загружаем каталог приложений…</p>'
-          : `<div class="app-grid app-grid--featured">${apps.map((app) => appCard(app, { installed: installedApps.has(app.id), downloaded: downloads.some((item) => item.id === app.id), installing: installingApps.has(app.id), compact: true })).join("")}</div>`}
+          : `<div class="app-grid app-grid--featured">${apps.map((app) => appCard(app, { installed: installedApps.has(app.id), downloaded: downloads.some((item) => item.id === app.id), installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), compact: true })).join("")}</div>`}
     </section>
 
     <section class="hub-overview">
@@ -79,7 +79,7 @@ function homePage({ apps, installedApps, downloads, installingApps, catalogLoadi
     </section>`;
 }
 
-function catalogPage(page, { apps, installedApps, downloads, installingApps, uninstallingApps, query, catalogLoading, catalogError }) {
+function catalogPage(page, { apps, installedApps, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError }) {
   const copy = pageCopy[page];
 
   const catalog = page === "library"
@@ -99,7 +99,7 @@ function catalogPage(page, { apps, installedApps, downloads, installingApps, uni
     : page === "apps" && catalogError
       ? `<div class="empty-state"><h2>Не удалось загрузить каталог</h2><p>${escapeHtml(catalogError)}</p><button class="button button--primary" data-catalog-retry>Повторить</button></div>`
       : matchingApps.length
-        ? `<div class="app-grid">${matchingApps.map((app) => appCard(app, { installed: installed || installedApps.has(app.id), downloaded: page === "downloads", installing: installingApps.has(app.id), uninstalling: uninstallingApps.has(app.id), compact: false })).join("")}</div>`
+        ? `<div class="app-grid">${matchingApps.map((app) => appCard(app, { installed: installed || installedApps.has(app.id), downloaded: page === "downloads", installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), uninstalling: uninstallingApps.has(app.id), compact: false })).join("")}</div>`
         : `<div class="empty-state"><span class="empty-state__icon">${icon(page === "apps" ? "grid" : page === "downloads" ? "download" : "books")}</span><h2>${page === "apps" && query ? "Ничего не найдено" : page === "apps" ? "Нет доступных приложений" : page === "downloads" ? "Загрузок пока нет" : "В библиотеке пока пусто"}</h2><p>${page === "apps" ? query ? "Попробуйте изменить поисковый запрос." : "В каталоге пока нет доступных приложений." : page === "downloads" ? "Загруженные приложения будут перечислены в этой истории." : "Установите приложение из каталога, чтобы оно появилось здесь."}</p>${page !== "apps" ? `<button class="button button--primary" data-page="apps">Перейти к приложениям ${icon("arrow")}</button>` : ""}</div>`;
 
   return `
@@ -137,6 +137,7 @@ export function renderApp({
   downloads = [],
   installedApps = new Set(),
   installingApps = new Set(),
+  installStatuses = new Map(),
   uninstallingApps = new Set(),
   settings,
   user,
@@ -149,8 +150,8 @@ export function renderApp({
   const page = activePage === "settings"
     ? settingsPage({ updaterStatus, updaterChecking, updateAvailableVersion, updateInstalling, version })
     : activePage === "home"
-      ? homePage({ apps, installedApps, downloads, installingApps, catalogLoading, catalogError })
-      : catalogPage(activePage, { apps, installedApps, downloads, installingApps, uninstallingApps, query, catalogLoading, catalogError });
+      ? homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError })
+      : catalogPage(activePage, { apps, installedApps, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError });
   const currentTitle = activePage === "settings"
     ? "Настройки"
     : activePage === "home"

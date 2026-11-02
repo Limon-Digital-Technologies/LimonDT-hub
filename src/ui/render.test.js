@@ -56,6 +56,17 @@ test("catalog loading and errors are shown instead of a false empty state", () =
   assert.match(errorHtml, /data-catalog-retry/);
 });
 
+test("install card shows the current download stage", () => {
+  const html = renderApp({
+    ...baseProps,
+    installingApps: new Set(["calculator"]),
+    installStatuses: new Map([["calculator", "Скачиваем установщик…"]]),
+  });
+
+  assert.match(html, /Скачиваем установщик…/);
+  assert.match(html, /aria-busy="true"/);
+});
+
 test("catalog text is rendered as text rather than markup", () => {
   const html = renderApp({
     ...baseProps,

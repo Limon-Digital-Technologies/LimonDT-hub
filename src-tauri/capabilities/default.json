@@ -18,6 +18,9 @@
           "url": "https://api.github.com/repos/Limon-Digital-Technologies/**/releases/latest"
         },
         {
+          "url": "https://github.com/Limon-Digital-Technologies/**/releases/latest/download/**"
+        },
+        {
           "url": "https://github.com/Limon-Digital-Technologies/**/releases/download/**"
         },
         {
