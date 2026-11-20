@@ -25,6 +25,9 @@
         },
         {
           "url": "https://release-assets.githubusercontent.com/**"
+        },
+        {
+          "url": "https://objects.githubusercontent.com/**"
         }
       ]
     }

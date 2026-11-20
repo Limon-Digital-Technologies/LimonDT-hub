@@ -75,3 +75,22 @@ test("catalog text is rendered as text rather than markup", () => {
   assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
 });
+
+test("calculator card uses the supplied Calculator asset", () => {
+  const html = renderApp(baseProps);
+  assert.match(html, /src="\/assets\/calculator-logo\.png"/);
+});
+
+test("settings support English and appearance choices", () => {
+  const html = renderApp({
+    ...baseProps,
+    activePage: "settings",
+    language: "en",
+    settings: { theme: "dark", appearance: "liquid", animations: true, compact: false },
+  });
+
+  assert.match(html, /data-theme="dark"/);
+  assert.match(html, /data-appearance="liquid"/);
+  assert.match(html, /data-language="en"/);
+  assert.match(html, /Limon Hub update/);
+});

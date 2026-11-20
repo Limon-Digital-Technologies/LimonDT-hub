@@ -115,6 +115,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .app-icon--purple { background: linear-gradient(140deg,#bd88ff,#7652de); }
 .app-icon--orange { background: linear-gradient(140deg,#ffc875,#f17f43); }
 .app-icon--green { background: linear-gradient(140deg,#65d8b2,#26a681); }
+.app-icon__image { width: 100%; height: 100%; object-fit: cover; }
 .app-icon__shine { position: absolute; top: -25px; right: -20px; width: 60px; height: 60px; border: 1px solid rgba(255,255,255,.36); border-radius: 17px; transform: rotate(37deg); }
 .icon-button { display: grid; width: 29px; height: 29px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #b4bac4; cursor: pointer; transition: color .18s, background .18s, transform .18s; }
 .icon-button:hover { transform: scale(1.06); background: #f6f8fc; color: #68758a; }
@@ -154,6 +155,11 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .settings-row p { margin: 5px 0 0; color: #969daa; font-size: 10px; }
 .settings-value { color: #727b8a; font-size: 10px; }
 .settings-row__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.segmented-control { display: flex; min-width: 160px; gap: 3px; padding: 3px; border: 1px solid #e8ecf3; border-radius: 9px; background: #f7f8fb; }
+.segmented-control--appearance { min-width: 300px; }
+.segment { min-height: 29px; flex: 1; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: #7f8794; font-size: 9px; cursor: pointer; transition: background .18s, color .18s, box-shadow .18s; white-space: nowrap; }
+.segment:hover { color: #4d5868; }
+.segment.is-selected { background: #fff; color: #2366cb; box-shadow: 0 1px 5px rgba(36,47,68,.10); }
 .button--secondary { border: 1px solid #e3e8f0; background: #fff; color: #46505e; }
 .button--secondary:hover { background: #f7f9fc; }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 26px; border-bottom: 1px solid #dce8fb; background: #f3f8ff; color: #34445d; font-size: 12px; }
@@ -174,6 +180,117 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 body.is-compact .app-card { min-height: 190px; padding: 14px; }
 body.is-compact .app-grid { gap: 9px; }
 body.no-motion *, body.no-motion *::before, body.no-motion *::after { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
+
+body.theme-dark {
+  --ink: #edf2fb;
+  --muted: #9aa4b5;
+  --line: #293244;
+  --surface: #171d29;
+  color: #edf2fb;
+  background: #0f141e;
+}
+body.theme-dark .sidebar,
+body.theme-dark .workspace,
+body.theme-dark .topbar,
+body.theme-dark .app-card,
+body.theme-dark .overview-card,
+body.theme-dark .settings-panel,
+body.theme-dark .auth-shell,
+body.theme-dark .auth-field input,
+body.theme-dark .auth-mode.is-selected,
+body.theme-dark .toast,
+body.theme-dark .button--secondary,
+body.theme-dark .search-box { background: #171d29; }
+body.theme-dark .sidebar { border-color: #293244; box-shadow: none; }
+body.theme-dark .workspace,
+body.theme-dark .topbar,
+body.theme-dark .app-card,
+body.theme-dark .overview-card,
+body.theme-dark .settings-panel,
+body.theme-dark .auth-shell,
+body.theme-dark .settings-row,
+body.theme-dark .search-box,
+body.theme-dark .auth-mode-switch,
+body.theme-dark .segmented-control,
+body.theme-dark .toast { border-color: #293244; }
+body.theme-dark .nav-item:hover,
+body.theme-dark .icon-button:hover,
+body.theme-dark .button--secondary:hover,
+body.theme-dark .segmented-control,
+body.theme-dark .auth-mode-switch { background: #202736; }
+body.theme-dark .nav-item,
+body.theme-dark .profile-copy strong,
+body.theme-dark .breadcrumbs strong,
+body.theme-dark .app-card h3,
+body.theme-dark .overview-card strong,
+body.theme-dark .settings-row strong,
+body.theme-dark .auth-field,
+body.theme-dark .auth-form-wrap > h2,
+body.theme-dark .search-box input { color: #edf2fb; }
+body.theme-dark .app-card p,
+body.theme-dark .overview-card small,
+body.theme-dark .settings-row p,
+body.theme-dark .settings-value,
+body.theme-dark .auth-subtitle,
+body.theme-dark .auth-privacy,
+body.theme-dark .profile-copy small,
+body.theme-dark .page-intro p,
+body.theme-dark .empty-state p { color: #9aa4b5; }
+body.theme-dark .app-card,
+body.theme-dark .overview-card,
+body.theme-dark .settings-panel,
+body.theme-dark .auth-field input,
+body.theme-dark .auth-mode-switch,
+body.theme-dark .segmented-control,
+body.theme-dark .search-box { box-shadow: none; }
+body.theme-dark .app-version,
+body.theme-dark .download-status,
+body.theme-dark .nav-item__count,
+body.theme-dark .empty-state__icon { background: #252d3d; }
+body.theme-dark .segment.is-selected,
+body.theme-dark .auth-mode.is-selected { background: #2b3444; color: #92baff; }
+
+body.appearance-translucent .sidebar,
+body.appearance-translucent .workspace,
+body.appearance-translucent .topbar,
+body.appearance-translucent .settings-panel,
+body.appearance-translucent .app-card,
+body.appearance-translucent .overview-card {
+  background: rgba(255,255,255,.72);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+body.appearance-liquid .app-shell {
+  background:
+    radial-gradient(circle at 12% 10%, rgba(74,142,255,.14), transparent 26%),
+    radial-gradient(circle at 88% 88%, rgba(141,96,255,.12), transparent 24%);
+}
+body.appearance-liquid .sidebar,
+body.appearance-liquid .workspace,
+body.appearance-liquid .topbar,
+body.appearance-liquid .settings-panel,
+body.appearance-liquid .app-card,
+body.appearance-liquid .overview-card {
+  border-color: rgba(255,255,255,.58);
+  background: rgba(255,255,255,.58);
+  box-shadow: inset 0 1px rgba(255,255,255,.72), 0 12px 34px rgba(35,74,130,.10);
+  backdrop-filter: blur(26px) saturate(155%);
+}
+body.theme-dark.appearance-translucent .sidebar,
+body.theme-dark.appearance-translucent .workspace,
+body.theme-dark.appearance-translucent .topbar,
+body.theme-dark.appearance-translucent .settings-panel,
+body.theme-dark.appearance-translucent .app-card,
+body.theme-dark.appearance-translucent .overview-card,
+body.theme-dark.appearance-liquid .sidebar,
+body.theme-dark.appearance-liquid .workspace,
+body.theme-dark.appearance-liquid .topbar,
+body.theme-dark.appearance-liquid .settings-panel,
+body.theme-dark.appearance-liquid .app-card,
+body.theme-dark.appearance-liquid .overview-card {
+  border-color: rgba(157,177,219,.14);
+  background: rgba(23,29,41,.70);
+  box-shadow: inset 0 1px rgba(255,255,255,.06), 0 12px 34px rgba(0,0,0,.18);
+}
 
 @media (max-width: 1050px) {
   .sidebar { flex-basis: 210px; }

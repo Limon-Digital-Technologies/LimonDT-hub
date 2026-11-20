@@ -6,14 +6,23 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import packageJson from "../package.json";
 import { fetchAppCatalog } from "./data/app-catalog.js";
+import { downloadVerifiedMsi } from "./data/github-releases.js";
+import { errorMessage } from "./lib/error-message.js";
+import { normalizeLanguage } from "./lib/i18n.js";
+import { normalizeDownloadHistory, upsertDownloadHistory } from "./lib/download-history.js";
 import { supabase, supabaseConfigError } from "./lib/supabase.js";
 import { renderApp, renderAuth } from "./ui/render.js";
 
 const root = document.querySelector("#app");
 const updaterEnabled = import.meta.env.VITE_UPDATER_ENABLED === "true";
 const legacyStorageKey = "limon-hub-preferences";
-const defaultSettings = { animations: true, compact: false };
-const maxInstallerBytes = 100 * 1024 * 1024;
+const defaultSettings = {
+  animations: true,
+  compact: false,
+  theme: "light",
+  appearance: "standard",
+  language: "ru",
+};
 const state = {
   activePage: "home",
   query: "",
@@ -50,12 +59,32 @@ function loadPreferences(userId) {
     stored = localStorage.getItem(legacyStorageKey);
     if (stored !== null) localStorage.setItem(key, stored);
   }
-  const preferences = stored ? JSON.parse(stored) : {};
-  state.downloads = preferences.downloads || [];
+  let preferences = {};
+  try {
+    preferences = stored ? JSON.parse(stored) : {};
+  } catch {
+    preferences = {};
+  }
+  state.downloads = normalizeDownloadHistory(preferences.downloads);
   state.settings = {
     animations: preferences.settings?.animations ?? defaultSettings.animations,
     compact: preferences.settings?.compact ?? defaultSettings.compact,
+    theme: preferences.settings?.theme === "dark" ? "dark" : "light",
+    appearance: ["translucent", "liquid"].includes(preferences.settings?.appearance)
+      ? preferences.settings.appearance
+      : "standard",
+    language: normalizeLanguage(preferences.settings?.language),
   };
+  applyAppearancePreferences();
+}
+
+function applyAppearancePreferences() {
+  document.body.classList.toggle("theme-dark", state.settings.theme === "dark");
+  document.body.classList.toggle("appearance-translucent", state.settings.appearance === "translucent");
+  document.body.classList.toggle("appearance-liquid", state.settings.appearance === "liquid");
+  document.body.classList.toggle("no-motion", !state.settings.animations);
+  document.body.classList.toggle("is-compact", state.settings.compact);
+  document.documentElement.lang = state.settings.language;
 }
 
 function persistPreferences() {
@@ -88,8 +117,10 @@ function render({ keepScroll = false } = {}) {
           pending: state.authPending,
           message: state.authMessage,
           configError: supabaseConfigError,
+          language: state.settings.language,
         });
     document.body.classList.remove("no-motion", "is-compact");
+    applyAppearancePreferences();
     return;
   }
 
@@ -101,10 +132,10 @@ function render({ keepScroll = false } = {}) {
     user: state.user,
     updateAvailableVersion: state.availableUpdate?.version ?? null,
     version: packageJson.version,
+    language: state.settings.language,
   });
   if (keepScroll) root.querySelector(".workspace-scroll").scrollTop = scrollTop;
-  document.body.classList.toggle("no-motion", !state.settings.animations);
-  document.body.classList.toggle("is-compact", state.settings.compact);
+  applyAppearancePreferences();
   root.querySelectorAll(".switch").forEach((button) => {
     const value = state.settings[button.dataset.setting];
     button.classList.toggle("is-on", value);
@@ -154,6 +185,15 @@ async function refreshInstalledApps() {
   state.installedApps = new Set(installedIds.filter((id) => knownApps.has(id)));
 }
 
+async function waitForInstalledApp(appId, attempts = 30) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await refreshInstalledApps();
+    if (state.installedApps.has(appId)) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  return false;
+}
+
 async function checkForUpdates({ automatic = false } = {}) {
   if (!isTauri()) {
     state.updaterStatus = "Проверка обновлений доступна в установленном хабе.";
@@ -177,7 +217,7 @@ async function checkForUpdates({ automatic = false } = {}) {
       ? `Доступна версия ${state.availableUpdate.version}.`
       : `Установлена последняя версия (${packageJson.version}).`;
   } catch (error) {
-    state.updaterStatus = `Не удалось проверить обновления: ${error.message}`;
+    state.updaterStatus = `Не удалось проверить обновления: ${errorMessage(error)}`;
     if (!automatic) showToast("Не удалось проверить обновления Limon Hub.");
   } finally {
     state.updaterChecking = false;
@@ -202,7 +242,7 @@ async function installHubUpdate() {
     await relaunch();
   } catch (error) {
     state.updateInstalling = false;
-    state.updaterStatus = `Не удалось установить обновление: ${error.message}`;
+    state.updaterStatus = `Не удалось установить обновление: ${errorMessage(error)}`;
     render();
     showToast("Не удалось установить обновление Limon Hub.");
   }
@@ -217,55 +257,17 @@ async function installApp(app) {
   let notification;
   let operation = "скачать";
   try {
-    const repositoryPath = app.repository.split("/").map(encodeURIComponent).join("/");
-    const releaseAssetUrl = (fileName) => (
-      `https://github.com/${repositoryPath}/releases/latest/download/${encodeURIComponent(fileName)}`
-    );
-    const installerUrl = releaseAssetUrl(app.assetName);
-    const checksumUrl = releaseAssetUrl(app.checksumName);
-
-    state.installStatuses.set(app.id, "Скачиваем установщик…");
+    state.installStatuses.set(app.id, "Ищем последний стабильный релиз…");
     render({ keepScroll: true });
-    const [installerResponse, checksumResponse] = await Promise.all([
-      fetchAppResource(installerUrl),
-      fetchAppResource(checksumUrl),
-    ]);
-    if (!installerResponse.ok) {
-      if (installerResponse.status === 404) {
-        throw new Error(`В последнем GitHub-релизе не найден файл ${app.assetName}.`);
-      }
-      throw new Error(`GitHub не отдал установщик: HTTP ${installerResponse.status}.`);
-    }
-    if (!checksumResponse.ok) {
-      throw new Error(`Не удалось скачать контрольную сумму: HTTP ${checksumResponse.status}.`);
-    }
+    const { installerBytes, releaseTag } = await downloadVerifiedMsi(app, fetchAppResource, (releaseTag) => {
+      state.installStatuses.set(app.id, `Скачиваем установщик из релиза ${releaseTag}…`);
+      render({ keepScroll: true });
+    });
+    const normalizedReleaseVersion = releaseTag.replace(/^v/i, "");
+    app.version = normalizedReleaseVersion;
+    render({ keepScroll: true });
     state.installStatuses.set(app.id, "Проверяем файл и контрольную сумму…");
     render({ keepScroll: true });
-    const contentLength = Number(installerResponse.headers.get("content-length"));
-    if (!Number.isSafeInteger(contentLength) || contentLength < 8 || contentLength > maxInstallerBytes) {
-      throw new Error("Размер установщика неизвестен или превышает ограничение 100 МБ.");
-    }
-    const installerBytes = new Uint8Array(await installerResponse.arrayBuffer());
-    if (installerBytes.byteLength > maxInstallerBytes) {
-      throw new Error("Установщик превышает ограничение 100 МБ.");
-    }
-    if (installerBytes.byteLength < 8
-      || installerBytes[0] !== 0xd0
-      || installerBytes[1] !== 0xcf
-      || installerBytes[2] !== 0x11
-      || installerBytes[3] !== 0xe0
-      || installerBytes[4] !== 0xa1
-      || installerBytes[5] !== 0xb1
-      || installerBytes[6] !== 0x1a
-      || installerBytes[7] !== 0xe1) {
-      throw new Error("GitHub вернул файл, который не является Windows MSI.");
-    }
-    const checksumText = await checksumResponse.text();
-    const expectedHash = checksumText.trim().match(/^([a-f\d]{64})\s+/i)?.[1]?.toLowerCase();
-    if (!expectedHash) throw new Error("В релизе отсутствует корректная SHA-256 контрольная сумма.");
-    const hashBuffer = await crypto.subtle.digest("SHA-256", installerBytes);
-    const actualHash = [...new Uint8Array(hashBuffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    if (actualHash !== expectedHash) throw new Error("Контрольная сумма установщика не совпадает. Файл не сохранён.");
 
     if (isTauri()) {
       operation = "установить";
@@ -276,10 +278,12 @@ async function installApp(app) {
       await writeFile(`${installerDirectory}/${app.fileName}`, installerBytes, {
         baseDir: BaseDirectory.AppCache,
       });
-      await invoke("install_app", { appId: app.id });
-      await refreshInstalledApps();
-      if (!state.installedApps.has(app.id)) {
-        throw new Error("Установщик завершился, но Windows не подтвердила установку приложения.");
+      await invoke("install_app", { appId: app.id, fileName: app.fileName });
+      state.installStatuses.set(app.id, "Завершите установку в окне Windows…");
+      render({ keepScroll: true });
+      const installed = await waitForInstalledApp(app.id);
+      if (!installed) {
+        throw new Error("Установщик запущен. Завершите установку в окне Windows, затем проверьте библиотеку.");
       }
     } else {
       const url = URL.createObjectURL(new Blob([installerBytes], { type: "application/octet-stream" }));
@@ -295,10 +299,11 @@ async function installApp(app) {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    state.downloads.push({
+    state.downloads = upsertDownloadHistory(state.downloads, {
       id: app.id,
       fileName: app.fileName,
       downloadedAt: new Date().toISOString(),
+      version: normalizedReleaseVersion,
     });
     if (isTauri()) state.activePage = "library";
     state.query = "";
@@ -307,7 +312,7 @@ async function installApp(app) {
       ? `${app.name} установлен. Теперь его можно запускать из хаба.`
       : `Установщик ${app.name} скачан. Запустите MSI, чтобы установить приложение.`;
   } catch (error) {
-    notification = `Не удалось ${operation} ${app.name}: ${error.message}`;
+    notification = `Не удалось ${operation} ${app.name}: ${errorMessage(error)}`;
   } finally {
     state.installingApps.delete(app.id);
     state.installStatuses.delete(app.id);
@@ -321,7 +326,7 @@ async function launchInstalledApp(app) {
     await invoke("launch_app", { appId: app.id });
   } catch (error) {
     render();
-    showToast(`Не удалось запустить ${app.name}: ${error.message}`);
+    showToast(`Не удалось запустить ${app.name}: ${errorMessage(error)}`);
   }
 }
 
@@ -338,7 +343,7 @@ async function uninstallInstalledApp(app) {
     }
     notification = `${app.name} удалён.`;
   } catch (error) {
-    notification = `Не удалось удалить ${app.name}: ${error.message}`;
+    notification = `Не удалось удалить ${app.name}: ${errorMessage(error)}`;
   } finally {
     state.uninstallingApps.delete(app.id);
     render();
@@ -347,7 +352,7 @@ async function uninstallInstalledApp(app) {
 }
 
 function authErrorMessage(error) {
-  const message = error?.message || "";
+  const message = errorMessage(error, "");
   if (/invalid login credentials/i.test(message)) return "Неверный email или пароль.";
   if (/email not confirmed/i.test(message)) return "Подтвердите email по ссылке из письма, затем войдите.";
   if (/user already registered/i.test(message)) return "Аккаунт с таким email уже существует. Попробуйте войти.";
@@ -444,7 +449,7 @@ root.addEventListener("click", async (event) => {
     render();
     if (state.activePage === "library" && isTauri()) {
       void refreshInstalledApps().then(render).catch((error) => {
-        showToast(`Не удалось проверить установленные приложения: ${error.message}`);
+        showToast(`Не удалось проверить установленные приложения: ${errorMessage(error)}`);
       });
     }
     return;
@@ -453,7 +458,7 @@ root.addEventListener("click", async (event) => {
   if (target.hasAttribute("data-catalog-retry")) {
     void loadAppCatalog().then(refreshInstalledApps).then(render).catch((error) => {
       render();
-      showToast(`Не удалось обновить библиотеку: ${error.message}`);
+      showToast(`Не удалось обновить библиотеку: ${errorMessage(error)}`);
     });
     return;
   }
@@ -472,6 +477,32 @@ root.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.theme) {
+    state.settings.theme = target.dataset.theme === "dark" ? "dark" : "light";
+    persistPreferences();
+    render();
+    showToast(state.settings.theme === "dark"
+      ? (state.settings.language === "en" ? "Dark theme enabled" : "Тёмная тема включена")
+      : (state.settings.language === "en" ? "Light theme enabled" : "Светлая тема включена"));
+    return;
+  }
+
+  if (target.dataset.appearance) {
+    state.settings.appearance = ["translucent", "liquid"].includes(target.dataset.appearance)
+      ? target.dataset.appearance
+      : "standard";
+    persistPreferences();
+    render();
+    return;
+  }
+
+  if (target.dataset.language) {
+    state.settings.language = normalizeLanguage(target.dataset.language);
+    persistPreferences();
+    render();
+    return;
+  }
+
   if (target.matches(".switch")) {
     const key = target.dataset.setting;
     const enabled = !state.settings[key];
@@ -479,8 +510,7 @@ root.addEventListener("click", async (event) => {
     target.classList.toggle("is-on", enabled);
     target.setAttribute("aria-checked", String(enabled));
     persistPreferences();
-    document.body.classList.toggle("no-motion", !state.settings.animations);
-    document.body.classList.toggle("is-compact", state.settings.compact);
+    applyAppearancePreferences();
     showToast(enabled ? "Настройка включена" : "Настройка выключена");
   }
 });
@@ -530,7 +560,7 @@ if (supabase) {
       loadPreferences(state.user.id);
       void loadAppCatalog().then(refreshInstalledApps).then(render).catch((error) => {
         render();
-        showToast(`Не удалось проверить приложения на этом устройстве: ${error.message}`);
+        showToast(`Не удалось проверить приложения на этом устройстве: ${errorMessage(error)}`);
       });
     }
     if (!state.user && previousId) {

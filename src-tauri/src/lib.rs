@@ -31,8 +31,13 @@ fn get_installed_apps() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-async fn install_app(app: tauri::AppHandle, app_id: String) -> Result<(), String> {
+async fn install_app(
+    app: tauri::AppHandle,
+    app_id: String,
+    file_name: String,
+) -> Result<(), String> {
     ensure_supported_app(&app_id)?;
+    ensure_msi_file_name(&file_name)?;
 
     #[cfg(target_os = "windows")]
     {
@@ -43,9 +48,7 @@ async fn install_app(app: tauri::AppHandle, app_id: String) -> Result<(), String
             .path()
             .app_cache_dir()
             .map_err(|error| format!("Не удалось открыть папку кэша хаба: {error}"))?;
-        let cached_installer = cache_dir
-            .join("installers")
-            .join("Limon-Calculator-windows-x64.msi");
+        let cached_installer = cache_dir.join("installers").join(&file_name);
         let canonical_cache = fs::canonicalize(&cache_dir)
             .map_err(|error| format!("Не удалось проверить папку кэша хаба: {error}"))?;
         let canonical_cached_installer = fs::canonicalize(&cached_installer)
@@ -73,40 +76,36 @@ async fn install_app(app: tauri::AppHandle, app_id: String) -> Result<(), String
             .join("Limon Hub");
         fs::create_dir_all(&downloads_dir)
             .map_err(|error| format!("Не удалось создать папку установщиков: {error}"))?;
-        let installer_path = downloads_dir.join("Limon-Calculator-windows-x64.msi");
+        let installer_path = downloads_dir.join(&file_name);
         fs::copy(&canonical_cached_installer, &installer_path)
             .map_err(|error| format!("Не удалось сохранить MSI в папку «Загрузки»: {error}"))?;
         let installer_path = fs::canonicalize(&installer_path)
             .map_err(|error| format!("Не удалось проверить MSI в папке «Загрузки»: {error}"))?;
-        let log_path = downloads_dir.join("Limon-Calculator-install.log");
+        let log_path = downloads_dir.join(format!(
+            "{}-install.log",
+            file_name.trim_end_matches(".msi")
+        ));
+        let installer_path = msiexec_compatible_path(&installer_path);
+        let log_path = msiexec_compatible_path(&log_path);
 
-        let status = tauri::async_runtime::spawn_blocking(move || {
-            Command::new("msiexec.exe")
+        tauri::async_runtime::spawn_blocking(move || {
+            let child = Command::new("msiexec.exe")
                 .args(["/i"])
                 .arg(&installer_path)
                 .args(["/L*v"])
                 .arg(&log_path)
-                .status()
-                .map(|status| (status, installer_path, log_path))
+                .spawn();
+            match child {
+                Ok(_) => Ok(()),
+                Err(error) => Err(format!(
+                    "Не удалось запустить Windows Installer: {error}. MSI сохранён в «Загрузки\\Limon Hub»: {}",
+                    installer_path.display()
+                )),
+            }
         })
         .await
-        .map_err(|error| format!("Не удалось запустить установщик: {error}"))?
-        .map_err(|error| format!("Не удалось запустить Windows Installer: {error}"))?;
-        let (status, installer_path, log_path) = status;
-
-        if status.success() || status.code() == Some(3010) {
-            return Ok(());
-        }
-        return Err(match status.code() {
-            Some(1602) => "Установка отменена.".to_string(),
-            Some(1619) => format!(
-                "Windows Installer не смог открыть пакет. MSI сохранён в «Загрузки\\Limon Hub»: {}. Журнал: {}",
-                installer_path.display(),
-                log_path.display()
-            ),
-            Some(code) => format!("Установщик завершился с кодом {code}."),
-            None => "Установщик завершился без кода результата.".to_string(),
-        });
+        .map_err(|error| format!("Не удалось запустить установщик: {error}"))??;
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -176,13 +175,38 @@ fn ensure_supported_app(app_id: &str) -> Result<(), String> {
     }
 }
 
+fn ensure_msi_file_name(file_name: &str) -> Result<(), String> {
+    if file_name.len() <= 200
+        && file_name.to_ascii_lowercase().ends_with(".msi")
+        && file_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        Ok(())
+    } else {
+        Err("Для установки требуется корректное имя MSI-файла.".to_string())
+    }
+}
+
 fn is_msi_file_header(header: &[u8; 8]) -> bool {
     header == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
 }
 
+fn msiexec_compatible_path(path: &std::path::Path) -> std::path::PathBuf {
+    let path_text = path.to_string_lossy();
+    if let Some(unc_path) = path_text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{unc_path}"));
+    }
+    if let Some(normal_path) = path_text.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(normal_path);
+    }
+    path.to_path_buf()
+}
+
 #[cfg(test)]
 mod msi_tests {
-    use super::is_msi_file_header;
+    use super::{ensure_msi_file_name, is_msi_file_header, msiexec_compatible_path};
+    use std::path::Path;
 
     #[test]
     fn accepts_compound_file_msi_signature() {
@@ -192,6 +216,33 @@ mod msi_tests {
     #[test]
     fn rejects_non_msi_downloads() {
         assert!(!is_msi_file_header(b"<html>40"));
+    }
+
+    #[test]
+    fn accepts_safe_msi_file_names() {
+        assert!(ensure_msi_file_name("Limon-Calculator-windows-x64.msi").is_ok());
+    }
+
+    #[test]
+    fn rejects_paths_and_non_msi_names() {
+        assert!(ensure_msi_file_name("../installer.msi").is_err());
+        assert!(ensure_msi_file_name("installer.exe").is_err());
+    }
+
+    #[test]
+    fn removes_windows_verbatim_prefix_for_msi_exec() {
+        assert_eq!(
+            msiexec_compatible_path(Path::new(r"\\?\C:\Users\user\Downloads\Limon Hub\app.msi")),
+            Path::new(r"C:\Users\user\Downloads\Limon Hub\app.msi")
+        );
+        assert_eq!(
+            msiexec_compatible_path(Path::new(r"\\?\UNC\server\share\app.msi")),
+            Path::new(r"\\server\share\app.msi")
+        );
+        assert_eq!(
+            msiexec_compatible_path(Path::new(r"C:\Downloads\app.msi")),
+            Path::new(r"C:\Downloads\app.msi")
+        );
     }
 }
 
