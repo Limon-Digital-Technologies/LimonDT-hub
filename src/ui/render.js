@@ -11,12 +11,20 @@ function navButton(item, activePage, downloadCount) {
     </button>`;
 }
 
-function appCard(app, { installed = false, downloaded = false, installing = false, installStatus, uninstalling = false, compact = false, language = "ru" } = {}) {
+function appCard(app, { installed = false, downloaded = false, installing = false, installStatus, uninstalling = false, compact = false, downloadOnly = false, language = "ru" } = {}) {
   const action = installing ? installStatus || (language === "en" ? "Installing…" : "Устанавливаем…") : installed ? t(language, "launch") : t(language, "install");
   const iconMarkup = app.id === "calculator"
     ? '<img class="app-icon__image" src="/assets/calculator-logo.png" alt="" />'
     : `<span>${escapeHtml(app.icon)}</span>`;
-  const actionMarkup = `<button class="button button--primary app-action" data-app-action="${app.id}" data-action="${installed ? "launch" : "install"}" ${installing || uninstalling ? "disabled aria-busy=\"true\"" : ""}>${installing ? "" : icon(installed ? "arrow" : "download")} ${action}</button>`;
+  const actionMarkup = downloadOnly
+    ? ""
+    : `<button class="button button--primary app-action" data-app-action="${app.id}" data-action="${installed ? "launch" : "install"}" ${installing || uninstalling ? "disabled aria-busy=\"true\"" : ""}>${installing ? "" : icon(installed ? "arrow" : "download")} ${action}</button>`;
+  const category = app.id === "calculator" && language === "en"
+    ? t(language, "appCategoryUtilities")
+    : app.category;
+  const description = app.id === "calculator"
+    ? t(language, "appDescriptionCalculator")
+    : app.description;
 
   return `
     <article class="app-card ${compact ? "app-card--compact" : ""}">
@@ -25,14 +33,14 @@ function appCard(app, { installed = false, downloaded = false, installing = fals
         <span class="app-version">v${escapeHtml(app.version)}</span>
       </div>
       <div class="app-card__copy">
-        <span class="app-card__category">${escapeHtml(app.category)}</span>
+        <span class="app-card__category">${escapeHtml(category)}</span>
         <h3>${escapeHtml(app.name)}</h3>
-        <p>${escapeHtml(app.description)}</p>
+        <p>${escapeHtml(description)}</p>
       </div>
       <div class="app-card__actions">
         ${actionMarkup}
         ${installed ? `<button class="button button--secondary app-remove" data-remove-app="${app.id}" ${uninstalling || installing ? "disabled" : ""}>${uninstalling ? t(language, "removeStarted") : t(language, "remove")}</button>` : ""}
-        ${downloaded ? `<span class="download-status">${installed ? "Установлено" : "Загружено"}</span>` : ""}
+        ${downloaded ? `<span class="download-status">${installed ? t(language, "installed") : t(language, "downloaded")}</span>` : ""}
       </div>
     </article>`;
 }
@@ -52,10 +60,10 @@ function homePage({ apps, installedApps, downloads, installingApps, installStatu
   return `
     <section class="welcome-banner">
       <div class="welcome-banner__content">
-        <span class="eyebrow eyebrow--light">ЭКОСИСТЕМА LIMON DIGITAL TECHNOLOGIES</span>
-        <h1>Ваша цифровая<br /><span>экосистема.</span></h1>
-        <p>Продукты, рабочие инструменты и сервисы команды — в едином пространстве.</p>
-        <button class="button button--light" data-page="apps">Открыть приложения ${icon("arrow")}</button>
+        <span class="eyebrow eyebrow--light">${language === "en" ? "LIMON DIGITAL TECHNOLOGIES ECOSYSTEM" : "ЭКОСИСТЕМА LIMON DIGITAL TECHNOLOGIES"}</span>
+        <h1>${t(language, "welcomeTitleA")}<br /><span>${t(language, "welcomeTitleB")}</span></h1>
+        <p>${t(language, "welcomeText")}</p>
+        <button class="button button--light" data-page="apps">${t(language, "openApps")} ${icon("arrow")}</button>
       </div>
       <div class="welcome-banner__art" aria-hidden="true">
         <div class="orbit orbit--one"></div><div class="orbit orbit--two"></div>
@@ -67,19 +75,19 @@ function homePage({ apps, installedApps, downloads, installingApps, installStatu
 
     <section class="content-section">
       <div class="section-heading">
-        <div><span class="eyebrow">ВАША ЭКОСИСТЕМА</span><h2>Приложения Limon</h2></div>
-        <button class="text-button" data-page="apps">Все приложения ${icon("arrow")}</button>
+        <div><span class="eyebrow">${t(language, "welcomeEyebrow")}</span><h2>${t(language, "limonApps")}</h2></div>
+        <button class="text-button" data-page="apps">${t(language, "allApps")} ${icon("arrow")}</button>
       </div>
       ${catalogError
-        ? `<p class="catalog-notice">${escapeHtml(catalogError)} <button class="text-button" data-catalog-retry>Повторить</button></p>`
+        ? `<p class="catalog-notice">${escapeHtml(catalogError)} <button class="text-button" data-catalog-retry>${t(language, "retry")}</button></p>`
         : catalogLoading
-          ? '<p class="catalog-notice">Загружаем каталог приложений…</p>'
+          ? `<p class="catalog-notice">${t(language, "loadingCatalog")}</p>`
           : `<div class="app-grid app-grid--featured">${apps.map((app) => appCard(app, { installed: installedApps.has(app.id), downloaded: downloads.some((item) => item.id === app.id), installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), compact: true, language })).join("")}</div>`}
     </section>
 
     <section class="hub-overview">
-      <button class="overview-card" data-page="library"><span class="overview-icon overview-icon--library">${icon("books")}</span><span><strong>Библиотека</strong><small>${installedCount ? `${installedCount} в коллекции` : "Ваша коллекция приложений"}</small></span>${icon("chevron")}</button>
-      <button class="overview-card" data-page="downloads"><span class="overview-icon overview-icon--downloads">${icon("download")}</span><span><strong>Загрузки</strong><small>${downloadCount ? `${downloadCount} загружено` : "История загрузок"}</small></span>${icon("chevron")}</button>
+      <button class="overview-card" data-page="library"><span class="overview-icon overview-icon--library">${icon("books")}</span><span><strong>${t(language, "library")}</strong><small>${installedCount ? `${installedCount} ${language === "en" ? "in collection" : "в коллекции"}` : t(language, "libraryApps")}</small></span>${icon("chevron")}</button>
+      <button class="overview-card" data-page="downloads"><span class="overview-icon overview-icon--downloads">${icon("download")}</span><span><strong>${t(language, "downloads")}</strong><small>${downloadCount ? `${downloadCount} ${t(language, "downloadedCount")}` : t(language, "downloadHistoryEmpty")}</small></span>${icon("chevron")}</button>
     </section>`;
 }
 
@@ -95,19 +103,26 @@ function catalogPage(page, { apps, installedApps, downloads, installingApps, ins
   const installed = page === "library";
   const count = matchingApps.length;
   const word = page === "downloads"
-    ? pluralize(count, "загрузка", "загрузки", "загрузок")
-    : pluralize(count, "приложение", "приложения", "приложений");
+    ? (language === "en" ? (count === 1 ? "download" : "downloads") : pluralize(count, "загрузка", "загрузки", "загрузок"))
+    : (language === "en" ? (count === 1 ? "application" : "applications") : pluralize(count, "приложение", "приложения", "приложений"));
 
   const catalogStatus = page === "apps" && catalogLoading
-    ? '<div class="empty-state"><h2>Загружаем каталог</h2><p>Получаем список приложений из Supabase.</p></div>'
+    ? `<div class="empty-state"><h2>${language === "en" ? "Loading catalog" : "Загружаем каталог"}</h2><p>${language === "en" ? "Getting applications from Supabase." : "Получаем список приложений из Supabase."}</p></div>`
     : page === "apps" && catalogError
-      ? `<div class="empty-state"><h2>Не удалось загрузить каталог</h2><p>${escapeHtml(catalogError)}</p><button class="button button--primary" data-catalog-retry>Повторить</button></div>`
+      ? `<div class="empty-state"><h2>${language === "en" ? "Could not load catalog" : "Не удалось загрузить каталог"}</h2><p>${escapeHtml(catalogError)}</p><button class="button button--primary" data-catalog-retry>${t(language, "retry")}</button></div>`
       : matchingApps.length
-        ? `<div class="app-grid">${matchingApps.map((app) => appCard(app, { installed: installed || installedApps.has(app.id), downloaded: page === "downloads", installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), uninstalling: uninstallingApps.has(app.id), compact: false, language })).join("")}</div>`
-        : `<div class="empty-state"><span class="empty-state__icon">${icon(page === "apps" ? "grid" : page === "downloads" ? "download" : "books")}</span><h2>${page === "apps" && query ? "Ничего не найдено" : page === "apps" ? "Нет доступных приложений" : page === "downloads" ? "Загрузок пока нет" : "В библиотеке пока пусто"}</h2><p>${page === "apps" ? query ? "Попробуйте изменить поисковый запрос." : "В каталоге пока нет доступных приложений." : page === "downloads" ? "Загруженные приложения будут перечислены в этой истории." : "Установите приложение из каталога, чтобы оно появилось здесь."}</p>${page !== "apps" ? `<button class="button button--primary" data-page="apps">Перейти к приложениям ${icon("arrow")}</button>` : ""}</div>`;
+        ? `<div class="app-grid">${matchingApps.map((app) => appCard(app, { installed: installed || installedApps.has(app.id), downloaded: page === "downloads", installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), uninstalling: uninstallingApps.has(app.id), compact: false, downloadOnly: page === "downloads", language })).join("")}</div>`
+        : `<div class="empty-state"><span class="empty-state__icon">${icon(page === "apps" ? "grid" : page === "downloads" ? "download" : "books")}</span><h2>${page === "apps" && query ? t(language, "notFoundTitle") : page === "apps" ? t(language, "noAppsTitle") : page === "downloads" ? t(language, "noDownloadsTitle") : t(language, "emptyLibraryTitle")}</h2><p>${page === "apps" ? query ? t(language, "notFoundText") : t(language, "noAppsText") : page === "downloads" ? t(language, "noDownloadsText") : t(language, "emptyLibraryText")}</p>${page !== "apps" ? `<button class="button button--primary" data-page="apps">${t(language, "goToApps")} ${icon("arrow")}</button>` : ""}</div>`;
+  const intro = language === "en"
+    ? {
+        apps: ["PRODUCTS BY LIMON", "Applications", "Applications from the Limon Digital Technologies ecosystem."],
+        downloads: ["DOWNLOAD HISTORY", "Downloads", "Applications downloaded on this device."],
+        library: ["YOUR COLLECTION", "Library", "Installed applications — launch or remove them from here."],
+      }[page]
+    : [copy.eyebrow, copy.title, copy.description];
 
   return `
-    <section class="page-intro"><span class="eyebrow">${copy.eyebrow}</span><h1>${copy.title}</h1><p>${copy.description}</p></section>
+    <section class="page-intro"><span class="eyebrow">${intro[0]}</span><h1>${intro[1]}</h1><p>${intro[2]}</p></section>
     <div class="catalog-toolbar"><span>${count} ${word}</span></div>
     ${catalogStatus}`;
 }
@@ -231,15 +246,19 @@ export function renderAuth({ mode, pending, message, configError, language = "ru
 
   return `
     <main class="auth-shell">
+      <div class="auth-language-control" role="group" aria-label="${t(language, "language")}">
+        <button class="segment ${language === "ru" ? "is-selected" : ""}" data-language="ru">RU</button>
+        <button class="segment ${language === "en" ? "is-selected" : ""}" data-language="en">EN</button>
+      </div>
       <section class="auth-brand-panel">
         <a class="brand auth-brand" href="#" aria-label="Limon Hub">
           <img class="brand__logo" src="/assets/HubLogo.png" alt="" />
           <span class="brand__copy"><strong>Limon Hub</strong><small>Digital Technologies</small></span>
         </a>
         <div class="auth-brand-panel__copy">
-          <span class="eyebrow eyebrow--light">${language === "en" ? "UNIFIED ECOSYSTEM" : "ЕДИНАЯ ЭКОСИСТЕМА"}</span>
-          <h1>${language === "en" ? "Everything your team creates." : "Всё, что создаёт ваша команда."}<br /><span>${language === "en" ? "In one workspace." : "В одном пространстве."}</span></h1>
-          <p>${language === "en" ? "Sign in to Limon Digital Technologies to access ecosystem products and services." : "Войдите в аккаунт Limon Digital Technologies и продолжите работу с продуктами и сервисами экосистемы."}</p>
+          <span class="eyebrow eyebrow--light">${t(language, "unifiedEcosystem")}</span>
+          <h1>${t(language, "authHeroTitleA")}<br /><span>${t(language, "authHeroTitleB")}</span></h1>
+          <p>${t(language, "authHeroText")}</p>
         </div>
         <div class="auth-brand-panel__art" aria-hidden="true">
           <div class="orbit orbit--one"></div><div class="orbit orbit--two"></div>
@@ -250,22 +269,22 @@ export function renderAuth({ mode, pending, message, configError, language = "ru
       </section>
       <section class="auth-form-panel">
         <div class="auth-form-wrap">
-          <span class="eyebrow">${language === "en" ? "LIMON ACCOUNT" : "АККАУНТ LIMON"}</span>
-          <h2>${isSignUp ? (language === "en" ? "Create account" : "Создайте аккаунт") : (language === "en" ? "Welcome back" : "С возвращением")}</h2>
-          <p class="auth-subtitle">${isSignUp ? (language === "en" ? "Join the Limon ecosystem." : "Присоединяйтесь к экосистеме Limon.") : (language === "en" ? "Sign in to continue." : "Войдите, чтобы продолжить работу.")}</p>
+          <span class="eyebrow">${t(language, "englishAccount")}</span>
+          <h2>${isSignUp ? t(language, "createAccount") : t(language, "welcomeBack")}</h2>
+          <p class="auth-subtitle">${isSignUp ? t(language, "joinText") : t(language, "signInText")}</p>
           <div class="auth-mode-switch" role="tablist" aria-label="${language === "en" ? "Account mode" : "Режим аккаунта"}">
             <button class="auth-mode ${!isSignUp ? "is-selected" : ""}" type="button" role="tab" aria-selected="${!isSignUp}" data-auth-mode="sign-in">${language === "en" ? "Sign in" : "Войти"}</button>
-            <button class="auth-mode ${isSignUp ? "is-selected" : ""}" type="button" role="tab" aria-selected="${isSignUp}" data-auth-mode="sign-up">${language === "en" ? "Register" : "Регистрация"}</button>
+            <button class="auth-mode ${isSignUp ? "is-selected" : ""}" type="button" role="tab" aria-selected="${isSignUp}" data-auth-mode="sign-up">${t(language, "registration")}</button>
           </div>
           ${configurationNotice}
           ${notice}
           <form id="auth-form" class="auth-form">
-            ${isSignUp ? `<label class="auth-field"><span>${language === "en" ? "Name" : "Имя"}</span><input name="name" type="text" autocomplete="name" placeholder="${language === "en" ? "How should we address you" : "Как к вам обращаться"}" maxlength="80" required ${disabled ? "disabled" : ""} /></label>` : ""}
+            ${isSignUp ? `<label class="auth-field"><span>${t(language, "name")}</span><input name="name" type="text" autocomplete="name" placeholder="${t(language, "namePlaceholder")}" maxlength="80" required ${disabled ? "disabled" : ""} /></label>` : ""}
             <label class="auth-field"><span>Email</span><input name="email" type="email" autocomplete="email" placeholder="name@example.com" maxlength="254" required ${disabled ? "disabled" : ""} /></label>
-            <label class="auth-field"><span>${language === "en" ? "Password" : "Пароль"}</span><input name="password" type="password" autocomplete="${isSignUp ? "new-password" : "current-password"}" placeholder="${isSignUp ? (language === "en" ? "At least 6 characters" : "Не менее 6 символов") : (language === "en" ? "Enter password" : "Введите пароль")}" minlength="6" required ${disabled ? "disabled" : ""} /></label>
-            <button class="button button--primary auth-submit" type="submit" ${disabled ? "disabled" : ""}>${pending ? (language === "en" ? "Please wait…" : "Подождите…") : isSignUp ? (language === "en" ? "Create account" : "Создать аккаунт") : (language === "en" ? "Sign in" : "Войти")} ${icon("arrow")}</button>
+            <label class="auth-field"><span>${t(language, "password")}</span><input name="password" type="password" autocomplete="${isSignUp ? "new-password" : "current-password"}" placeholder="${isSignUp ? t(language, "passwordPlaceholderSignUp") : t(language, "passwordPlaceholderSignIn")}" minlength="6" required ${disabled ? "disabled" : ""} /></label>
+            <button class="button button--primary auth-submit" type="submit" ${disabled ? "disabled" : ""}>${pending ? t(language, "pleaseWait") : isSignUp ? t(language, "createAccount") : t(language, "signIn")} ${icon("arrow")}</button>
           </form>
-          <p class="auth-privacy">${language === "en" ? "Your account is protected by Supabase Auth." : "Ваша учётная запись защищена Supabase Auth."}</p>
+          <p class="auth-privacy">${t(language, "accountProtected")}</p>
         </div>
       </section>
     </main>`;

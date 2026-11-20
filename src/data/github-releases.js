@@ -30,6 +30,7 @@ async function findReleaseAssets(app, fetchResource) {
     if (response.status === 404) {
       throw new Error("В репозитории пока нет опубликованного стабильного релиза.");
     }
+
     if (response.status === 403 || response.status === 429) {
       throw new Error("GitHub временно ограничил запросы. Попробуйте скачать приложение позже.");
     }
@@ -64,6 +65,21 @@ async function findReleaseAssets(app, fetchResource) {
     installerUrl: findAsset(app.assetName),
     checksumUrl: findAsset(app.checksumName),
   };
+}
+
+export async function resolveLatestReleaseTag(app, fetchResource) {
+  const [owner, repo] = app.repository.split("/");
+  const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`;
+  const response = await fetchResource(apiUrl, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) return app.version;
+  const release = await response.json();
+  if (!release || typeof release.tag_name !== "string") return app.version;
+  return release.tag_name.replace(/^v/i, "");
 }
 
 export function parseSha256Checksum(checksumText, installerName) {

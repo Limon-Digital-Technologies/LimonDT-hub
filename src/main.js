@@ -6,7 +6,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import packageJson from "../package.json";
 import { fetchAppCatalog } from "./data/app-catalog.js";
-import { downloadVerifiedMsi } from "./data/github-releases.js";
+import { downloadVerifiedMsi, resolveLatestReleaseTag } from "./data/github-releases.js";
 import { errorMessage } from "./lib/error-message.js";
 import { normalizeLanguage } from "./lib/i18n.js";
 import { normalizeDownloadHistory, upsertDownloadHistory } from "./lib/download-history.js";
@@ -88,7 +88,13 @@ function applyAppearancePreferences() {
 }
 
 function persistPreferences() {
-  if (!state.user) return;
+  if (!state.user) {
+    localStorage.setItem(
+      legacyStorageKey,
+      JSON.stringify({ downloads: state.downloads, settings: state.settings }),
+    );
+    return;
+  }
   localStorage.setItem(
     preferencesKey(state.user.id),
     JSON.stringify({
@@ -166,6 +172,10 @@ async function loadAppCatalog() {
   render();
   try {
     state.apps = await fetchAppCatalog(supabase);
+    render();
+    void Promise.all(state.apps.map(async (app) => {
+      app.version = await resolveLatestReleaseTag(app, fetchAppResource);
+    })).then(() => render()).catch(() => {});
   } catch (error) {
     state.catalogError = error;
     state.apps = [];
