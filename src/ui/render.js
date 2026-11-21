@@ -201,7 +201,7 @@ export function renderApp({
           <span class="brand__copy"><strong>Limon Hub</strong><small>Digital Technologies</small></span>
         </a>
         <div class="sidebar__divider"></div>
-        <nav class="sidebar__nav" aria-label="Главное меню">
+        <nav class="sidebar__nav" aria-label="${language === "en" ? "Main menu" : "Главное меню"}">
           <span class="nav-caption">${t(language, "ecosystem")}</span>
           ${translatedNavigation("main")}
           <span class="nav-caption nav-caption--library">${t(language, "collection")}</span>
@@ -215,10 +215,10 @@ export function renderApp({
 
       <main class="workspace">
         <header class="topbar">
-          <div class="breadcrumbs"><span>Экосистема Limon</span>${icon("chevron")}<strong>${currentTitle}</strong></div>
+          <div class="breadcrumbs"><span>${language === "en" ? "Limon ecosystem" : "Экосистема Limon"}</span>${icon("chevron")}<strong>${currentTitle}</strong></div>
           <div class="topbar__actions">
             <label class="search-box">${icon("search")}<input id="catalog-search" type="search" placeholder="${t(language, "search")}" value="${escapeAttribute(query)}" aria-label="${t(language, "search")}" /><kbd>Ctrl K</kbd></label>
-            <button class="profile-button" data-auth-action="sign-out" aria-label="Выйти из аккаунта ${escapeHtml(user.name)}">
+            <button class="profile-button" data-auth-action="sign-out" aria-label="${t(language, "signOut")} ${escapeHtml(user.name)}">
               <span class="profile-avatar">${escapeHtml(user.initials)}</span>
               <span class="profile-copy"><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.email)}</small></span>
               <span class="profile-sign-out">${t(language, "signOut")}</span>
@@ -226,7 +226,7 @@ export function renderApp({
           </div>
         </header>
         ${updateAvailableVersion
-          ? `<section class="update-banner" role="status"><span>Доступно обновление Limon Hub <strong>v${escapeHtml(updateAvailableVersion)}</strong></span><button class="button button--primary" data-update-action="install" ${updateInstalling ? "disabled" : ""}>${updateInstalling ? "Устанавливаем…" : "Установить и перезапустить"}</button></section>`
+          ? `<section class="update-banner" role="status"><span>${language === "en" ? "A Limon Hub update is available" : "Доступно обновление Limon Hub"} <strong>v${escapeHtml(updateAvailableVersion)}</strong></span><button class="button button--primary" data-update-action="install" ${updateInstalling ? "disabled" : ""}>${updateInstalling ? (language === "en" ? "Installing…" : "Устанавливаем…") : (language === "en" ? "Install and restart" : "Установить и перезапустить")}</button></section>`
           : ""}
         <div class="workspace-scroll"><div class="page-content">${page}</div></div>
         <div class="toast-region" aria-live="polite"></div>
@@ -273,7 +273,7 @@ export function renderAuth({ mode, pending, message, configError, language = "ru
           <h2>${isSignUp ? t(language, "createAccount") : t(language, "welcomeBack")}</h2>
           <p class="auth-subtitle">${isSignUp ? t(language, "joinText") : t(language, "signInText")}</p>
           <div class="auth-mode-switch" role="tablist" aria-label="${language === "en" ? "Account mode" : "Режим аккаунта"}">
-            <button class="auth-mode ${!isSignUp ? "is-selected" : ""}" type="button" role="tab" aria-selected="${!isSignUp}" data-auth-mode="sign-in">${language === "en" ? "Sign in" : "Войти"}</button>
+            <button class="auth-mode ${!isSignUp ? "is-selected" : ""}" type="button" role="tab" aria-selected="${!isSignUp}" data-auth-mode="sign-in">${t(language, "signIn")}</button>
             <button class="auth-mode ${isSignUp ? "is-selected" : ""}" type="button" role="tab" aria-selected="${isSignUp}" data-auth-mode="sign-up">${t(language, "registration")}</button>
           </div>
           ${configurationNotice}

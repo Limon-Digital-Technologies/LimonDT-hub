@@ -1,5 +1,6 @@
 import "./styles.css";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Effect, getCurrentWindow } from "@tauri-apps/api/window";
 import { BaseDirectory, mkdir, writeFile } from "@tauri-apps/plugin-fs";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -14,6 +15,7 @@ import { supabase, supabaseConfigError } from "./lib/supabase.js";
 import { renderApp, renderAuth } from "./ui/render.js";
 
 const root = document.querySelector("#app");
+const nativeWindow = isTauri() ? getCurrentWindow() : null;
 const updaterEnabled = import.meta.env.VITE_UPDATER_ENABLED === "true";
 const legacyStorageKey = "limon-hub-preferences";
 const defaultSettings = {
@@ -47,6 +49,9 @@ const state = {
   updateInstalling: false,
   availableUpdate: null,
 };
+let nativeAppearanceRequest = "";
+let nativeAppearanceRevision = 0;
+let nativeAppearanceTask = Promise.resolve();
 
 function preferencesKey(userId) {
   return `limon-hub-preferences:${userId}`;
@@ -81,10 +86,11 @@ function loadPreferences(userId) {
 function applyAppearancePreferences() {
   document.body.classList.toggle("theme-dark", state.settings.theme === "dark");
   document.body.classList.toggle("appearance-translucent", state.settings.appearance === "translucent");
-  document.body.classList.toggle("appearance-liquid", state.settings.appearance === "liquid");
+  document.body.classList.toggle("appearance-liquid-glass", state.settings.appearance === "liquid");
   document.body.classList.toggle("no-motion", !state.settings.animations);
   document.body.classList.toggle("is-compact", state.settings.compact);
   document.documentElement.lang = state.settings.language;
+  syncNativeWindowAppearance();
 }
 
 function persistPreferences() {
@@ -95,6 +101,7 @@ function persistPreferences() {
     );
     return;
   }
+
   localStorage.setItem(
     preferencesKey(state.user.id),
     JSON.stringify({
@@ -102,6 +109,68 @@ function persistPreferences() {
       settings: state.settings,
     }),
   );
+}
+
+function syncNativeWindowAppearance() {
+  if (!nativeWindow) return;
+  const appearance = state.settings.appearance;
+  if (appearance === nativeAppearanceRequest) return;
+  nativeAppearanceRequest = appearance;
+  const revision = ++nativeAppearanceRevision;
+  const userAgent = navigator.userAgent.toLowerCase();
+  let effects = null;
+
+  if (appearance !== "standard") {
+    if (userAgent.includes("windows")) {
+      effects = { effects: [Effect.Acrylic] };
+    } else if (userAgent.includes("macintosh")) {
+      effects = appearance === "liquid"
+        ? { effects: [Effect.LiquidGlassRegular, Effect.Popover] }
+        : { effects: [Effect.Popover] };
+    }
+  }
+
+  nativeAppearanceTask = nativeAppearanceTask.then(async () => {
+    if (revision !== nativeAppearanceRevision) return;
+    try {
+      if (effects) {
+        await nativeWindow.setEffects(effects);
+      } else {
+        await nativeWindow.clearEffects();
+      }
+      if (revision !== nativeAppearanceRevision) return;
+      const hasNativeEffects = Boolean(effects);
+      document.documentElement.classList.toggle("native-window-effects", hasNativeEffects);
+      document.body.classList.toggle("native-window-effects", hasNativeEffects);
+    } catch (error) {
+      if (revision !== nativeAppearanceRevision) return;
+      nativeAppearanceRequest = "";
+      document.documentElement.classList.remove("native-window-effects");
+      document.body.classList.remove("native-window-effects");
+      console.error("Could not apply native window material", error);
+      showToast(state.settings.language === "en"
+        ? "Could not apply the system window effect."
+        : "Не удалось применить системный эффект окна.");
+    }
+  });
+}
+
+function loadUnauthenticatedPreferences() {
+  try {
+    const preferences = JSON.parse(localStorage.getItem(legacyStorageKey) || "{}");
+    state.settings = {
+      animations: preferences.settings?.animations ?? defaultSettings.animations,
+      compact: preferences.settings?.compact ?? defaultSettings.compact,
+      theme: preferences.settings?.theme === "dark" ? "dark" : "light",
+      appearance: ["translucent", "liquid"].includes(preferences.settings?.appearance)
+        ? preferences.settings.appearance
+        : "standard",
+      language: normalizeLanguage(preferences.settings?.language),
+    };
+  } catch {
+    state.settings = { ...defaultSettings };
+  }
+  applyAppearancePreferences();
 }
 
 function userProfile(user) {
@@ -583,11 +652,13 @@ if (supabase) {
       state.downloads = [];
       state.settings = { ...defaultSettings };
     }
+    if (!state.user) loadUnauthenticatedPreferences();
     state.authLoading = false;
     render();
   });
 } else {
   state.authLoading = false;
+  loadUnauthenticatedPreferences();
 }
 
 render();

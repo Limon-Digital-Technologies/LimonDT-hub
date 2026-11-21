@@ -94,3 +94,26 @@ test("settings support English and appearance choices", () => {
   assert.match(html, /data-language="en"/);
   assert.match(html, /Limon Hub update/);
 });
+
+test("glass modes use native acrylic and separate Calculator-style surfaces", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const main = await readFile(new URL("../main.js", import.meta.url), "utf8");
+  const capability = await readFile(
+    new URL("../../src-tauri/capabilities/default.json", import.meta.url),
+    "utf8",
+  );
+  const tauriConfig = await readFile(
+    new URL("../../src-tauri/tauri.conf.json", import.meta.url),
+    "utf8",
+  );
+  assert.match(css, /body\.appearance-translucent/);
+  assert.match(css, /body\.appearance-liquid-glass/);
+  assert.match(css, /native-window-effects/);
+  assert.match(css, /backdrop-filter:\s*blur\(30px\)/);
+  assert.match(css, /radial-gradient\(/);
+  assert.match(main, /Effect\.Acrylic/);
+  assert.match(main, /getCurrentWindow\(\)/);
+  assert.match(capability, /core:window:allow-set-effects/);
+  assert.match(tauriConfig, /"transparent":\s*true/);
+});
