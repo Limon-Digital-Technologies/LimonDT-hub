@@ -68,6 +68,41 @@ test("downloads the selected MSI and checksum from the latest stable release", a
   assert.equal(requests.length, 3);
 });
 
+test("verifies an MSI against the GitHub release digest when no checksum asset is configured", async () => {
+  const checksum = await crypto.subtle.digest("SHA-256", installerBytes);
+  const hash = [...new Uint8Array(checksum)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const notes = {
+    ...app,
+    id: "notes",
+    repository: "Limon-Digital-Technologies/limonDT-notes",
+    assetName: "Limon.Notes_1.0.0_x64_en-US.msi",
+    checksumName: null,
+  };
+  const requests = [];
+  const fetchResource = async (url) => {
+    requests.push(url);
+    if (url.includes("api.github.com")) {
+      return response({
+        tag_name: "v1.0.0",
+        draft: false,
+        prerelease: false,
+        assets: [{
+          name: notes.assetName,
+          state: "uploaded",
+          browser_download_url: "https://github.com/Limon-Digital-Technologies/limonDT-notes/releases/download/v1.0.0/Limon.Notes_1.0.0_x64_en-US.msi",
+          digest: `sha256:${hash}`,
+        }],
+      });
+    }
+    return response(installerBytes);
+  };
+
+  const result = await downloadVerifiedMsi(notes, fetchResource);
+  assert.equal(result.releaseTag, "v1.0.0");
+  assert.deepEqual(result.installerBytes, installerBytes);
+  assert.equal(requests.length, 2);
+});
+
 test("rejects checksum files naming a different installer", () => {
   assert.throws(
     () => parseSha256Checksum(`${"a".repeat(64)}  other.msi`, app.assetName),

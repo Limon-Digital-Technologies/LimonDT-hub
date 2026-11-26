@@ -15,7 +15,9 @@ export function mapCatalogRow(row) {
   const id = requiredText(row.id, "id", 64);
   const repository = requiredText(row.repository, "repository", 200);
   const assetName = requiredText(row.asset_name, "asset_name", 200);
-  const checksumName = requiredText(row.checksum_name, "checksum_name", 220);
+  const checksumName = row.checksum_name == null
+    ? null
+    : requiredText(row.checksum_name, "checksum_name", 220);
   const color = requiredText(row.color, "color", 16);
 
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error("В каталоге некорректный id приложения.");
@@ -23,7 +25,7 @@ export function mapCatalogRow(row) {
     throw new Error(`Репозиторий ${repository} не принадлежит организации Limon.`);
   }
   if (!/^[A-Za-z0-9._-]+\.msi$/i.test(assetName)
-    || !/^[A-Za-z0-9._-]+\.msi\.sha256$/i.test(checksumName)) {
+    || (checksumName && !/^[A-Za-z0-9._-]+\.msi\.sha256$/i.test(checksumName))) {
     throw new Error(`Для ${id} указаны некорректные имена MSI или SHA-256 файла.`);
   }
   if (!allowedColors.has(color)) throw new Error(`Для ${id} указан неподдерживаемый цвет.`);

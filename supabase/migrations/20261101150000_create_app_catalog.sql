@@ -7,7 +7,7 @@ create table if not exists public.app_catalog (
   color text not null check (color in ('blue', 'purple', 'orange', 'green')),
   repository text not null check (repository ~ '^Limon-Digital-Technologies/[A-Za-z0-9._-]+$'),
   asset_name text not null check (asset_name ~ '^[A-Za-z0-9._-]+[.]msi$'),
-  checksum_name text not null check (checksum_name ~ '^[A-Za-z0-9._-]+[.]msi[.]sha256$'),
+  checksum_name text check (checksum_name is null or checksum_name ~ '^[A-Za-z0-9._-]+[.]msi[.]sha256$'),
   version text not null check (length(version) between 1 and 32),
   sort_order integer not null default 0,
   is_published boolean not null default false,

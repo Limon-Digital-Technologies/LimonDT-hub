@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "limon-digital-tech-hub"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "serde_json",
  "tauri",
@@ -1910,6 +1910,7 @@ dependencies = [
  "tauri-plugin-http",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "winreg",
 ]
 
 [[package]]

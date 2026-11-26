@@ -57,13 +57,18 @@ async function findReleaseAssets(app, fetchResource) {
       entry?.name === name && entry.state === "uploaded" && typeof entry.browser_download_url === "string"
     ));
     if (!asset) throw new Error(`В релизе ${release.tag_name} не найден файл ${name}.`);
-    return assertReleaseAssetUrl(asset.browser_download_url, app.repository);
+    return {
+      url: assertReleaseAssetUrl(asset.browser_download_url, app.repository),
+      digest: asset.digest,
+    };
   };
+  const installer = findAsset(app.assetName);
 
   return {
     tag: release.tag_name,
-    installerUrl: findAsset(app.assetName),
-    checksumUrl: findAsset(app.checksumName),
+    installerUrl: installer.url,
+    installerDigest: installer.digest,
+    checksumUrl: app.checksumName ? findAsset(app.checksumName).url : null,
   };
 }
 
@@ -99,12 +104,12 @@ export async function downloadVerifiedMsi(app, fetchResource, onReleaseFound = (
 
   const [installerResponse, checksumResponse] = await Promise.all([
     fetchResource(release.installerUrl),
-    fetchResource(release.checksumUrl),
+    release.checksumUrl ? fetchResource(release.checksumUrl) : Promise.resolve(null),
   ]);
   if (!installerResponse.ok) {
     throw new Error(`Не удалось скачать установщик: HTTP ${installerResponse.status}.`);
   }
-  if (!checksumResponse.ok) {
+  if (checksumResponse && !checksumResponse.ok) {
     throw new Error(`Не удалось скачать контрольную сумму: HTTP ${checksumResponse.status}.`);
   }
 
@@ -124,7 +129,9 @@ export async function downloadVerifiedMsi(app, fetchResource, onReleaseFound = (
     throw new Error("GitHub вернул файл, который не является Windows MSI.");
   }
 
-  const expectedHash = parseSha256Checksum(await checksumResponse.text(), app.assetName);
+  const expectedHash = checksumResponse
+    ? parseSha256Checksum(await checksumResponse.text(), app.assetName)
+    : parseReleaseDigest(release.installerDigest);
   const hashBuffer = await crypto.subtle.digest("SHA-256", installerBytes);
   const actualHash = [...new Uint8Array(hashBuffer)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -134,4 +141,12 @@ export async function downloadVerifiedMsi(app, fetchResource, onReleaseFound = (
   }
 
   return { installerBytes, releaseTag: release.tag };
+}
+
+function parseReleaseDigest(digest) {
+  const match = typeof digest === "string" && digest.match(/^sha256:([a-f\d]{64})$/i);
+  if (!match) {
+    throw new Error("В метаданных релиза GitHub отсутствует корректная SHA-256 контрольная сумма.");
+  }
+  return match[1].toLowerCase();
 }

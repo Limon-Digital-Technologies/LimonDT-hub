@@ -154,6 +154,21 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .settings-row strong { color: #404754; font-size: 11px; font-weight: 600; }
 .settings-row p { margin: 5px 0 0; color: #969daa; font-size: 10px; }
 .settings-value { color: #727b8a; font-size: 10px; }
+.storage-dialog-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(18,25,39,.32); backdrop-filter: blur(9px); animation: storage-backdrop-in .2s ease both; }
+.storage-dialog { width: min(100%, 430px); padding: 26px; border: 1px solid rgba(255,255,255,.82); border-radius: 20px; background: rgba(255,255,255,.96); box-shadow: 0 24px 70px rgba(25,36,58,.22); animation: storage-dialog-in .28s cubic-bezier(.2,.8,.2,1) both; }
+.storage-dialog h2 { margin: 10px 0 8px; font-family: Manrope, "Segoe UI", sans-serif; font-size: 21px; letter-spacing: -.6px; }
+.storage-dialog > p { margin: 0; color: #858d9a; font-size: 11px; line-height: 1.65; }
+.storage-dialog .storage-dialog__pending { margin-top: 12px; color: #476087; }
+.storage-dialog__field { display: grid; gap: 7px; margin-top: 20px; color: #646d7c; font-size: 10px; font-weight: 600; }
+.storage-dialog__field select { min-height: 40px; padding: 0 12px; border: 1px solid #e3e8f0; border-radius: 10px; background: #fff; color: #3e4653; font: inherit; }
+.storage-dialog__error { margin-top: 16px !important; color: #bd4d50 !important; }
+.storage-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+.storage-dialog__actions .button { min-height: 36px; }
+@keyframes storage-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes storage-dialog-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+body.theme-dark .storage-dialog { border-color: #343c4a; background: rgba(31,37,48,.97); color: #eef1f7; }
+body.theme-dark .storage-dialog__field select { border-color: #3c4657; background: #202734; color: #eef1f7; }
+body.theme-dark .storage-dialog__pending { color: #b4c7e9; }
 .settings-row__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .segmented-control { display: flex; min-width: 160px; gap: 3px; padding: 3px; border: 1px solid #e8ecf3; border-radius: 9px; background: #f7f8fb; }
 .segmented-control--appearance { min-width: 300px; }

@@ -127,7 +127,18 @@ function catalogPage(page, { apps, installedApps, downloads, installingApps, ins
     ${catalogStatus}`;
 }
 
-function settingsPage({ updaterStatus, updaterChecking, updateAvailableVersion, updateInstalling, version, settings, language }) {
+function settingsPage({
+  updaterStatus,
+  updaterChecking,
+  updateAvailableVersion,
+  updateInstalling,
+  version,
+  settings,
+  storageRoot,
+  hubRelocationRequired,
+  hubRelocationPending,
+  language,
+}) {
   const theme = settings?.theme ?? "light";
   const appearance = settings?.appearance ?? "standard";
   return `
@@ -138,6 +149,7 @@ function settingsPage({ updaterStatus, updaterChecking, updateAvailableVersion, 
       <div class="settings-row"><div><strong>${t(language, "language")}</strong><p>${language === "en" ? "Interface language." : "Язык интерфейса."}</p></div><div class="segmented-control" role="group" aria-label="${t(language, "language")}"><button class="segment ${language === "ru" ? "is-selected" : ""}" data-language="ru">RU</button><button class="segment ${language === "en" ? "is-selected" : ""}" data-language="en">EN</button></div></div>
       <div class="settings-row"><div><strong>${t(language, "animations")}</strong><p>${t(language, "animationsDescription")}</p></div><button class="switch ${settings?.animations === false ? "" : "is-on"}" data-setting="animations" role="switch" aria-checked="${settings?.animations !== false}" aria-label="${t(language, "animations")}"><span></span></button></div>
       <div class="settings-row"><div><strong>${t(language, "compact")}</strong><p>${t(language, "compactDescription")}</p></div><button class="switch ${settings?.compact ? "is-on" : ""}" data-setting="compact" role="switch" aria-checked="${Boolean(settings?.compact)}" aria-label="${t(language, "compact")}"><span></span></button></div>
+      <div class="settings-row"><div><strong>${language === "en" ? "Ecosystem storage" : "Хранилище экосистемы"}</strong><p>${storageRoot ? (hubRelocationRequired ? (language === "en" ? "Hub is still installed in its previous location." : "Hub ещё установлен в прежнем месте.") : escapeHtml(storageRoot)) : (language === "en" ? "Choose a drive once; Hub, apps and their data will use the shared LimonDT folder." : "Выберите диск один раз — Hub, приложения и их данные будут использовать общую папку LimonDT.")}</p></div>${storageRoot ? (hubRelocationRequired ? `<button class="button button--secondary" data-storage-action="relocate-hub" ${hubRelocationPending ? "disabled" : ""}>${hubRelocationPending ? (language === "en" ? "Moving Hub…" : "Переносим Hub…") : (language === "en" ? "Move Hub" : "Перенести Hub")}</button>` : `<span class="settings-value">${language === "en" ? "Configured" : "Настроено"}</span>`) : `<button class="button button--secondary" data-storage-open>${language === "en" ? "Choose drive" : "Выбрать диск"}</button>`}</div>
       <div class="settings-row settings-row--updates">
         <div><strong>${t(language, "hubUpdate")}</strong><p data-updater-status>${escapeHtml(updaterStatus)}</p></div>
         <div class="settings-row__actions">
@@ -168,11 +180,29 @@ export function renderApp({
   updaterChecking,
   updateAvailableVersion,
   updateInstalling,
+  storageRoot,
+  hubRelocationRequired = false,
+  hubRelocationPending = false,
+  storageDialogOpen = false,
+  storageDrives = [],
+  storageDriveSelection = "",
+  pendingStorageAppName = "",
   version,
   language = "ru",
 }) {
   const page = activePage === "settings"
-    ? settingsPage({ updaterStatus, updaterChecking, updateAvailableVersion, updateInstalling, version, settings, language })
+    ? settingsPage({
+      updaterStatus,
+      updaterChecking,
+      updateAvailableVersion,
+      updateInstalling,
+      version,
+      settings,
+      storageRoot,
+      hubRelocationRequired,
+      hubRelocationPending,
+      language,
+    })
     : activePage === "home"
       ? homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError, language })
       : catalogPage(activePage, { apps, installedApps, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError, language });
@@ -192,6 +222,18 @@ export function renderApp({
     .filter((item) => item.section === section)
     .map((item) => navButton({ ...item, label: navLabels[item.id] }, activePage, downloads.length))
     .join("");
+  const storageDialog = storageDialogOpen
+    ? `<div class="storage-dialog-backdrop"><section class="storage-dialog" role="dialog" aria-modal="true" aria-labelledby="storage-dialog-title">
+        <span class="eyebrow">${language === "en" ? "LIMON ECOSYSTEM" : "ЭКОСИСТЕМА LIMON"}</span>
+        <h2 id="storage-dialog-title">${language === "en" ? "Choose a storage drive" : "Выберите диск для хранения"}</h2>
+        <p>${language === "en" ? "LimonDT creates its folders automatically and moves Hub. Reinstall existing apps from the catalog to move them; old data is copied and kept as a backup." : "LimonDT автоматически создаст папки и перенесёт Hub. Чтобы перенести установленные приложения, переустановите их из каталога; исходные данные останутся резервной копией."}</p>
+        ${pendingStorageAppName ? `<p class="storage-dialog__pending">${language === "en" ? `After setup, restart Hub and retry installing ${escapeHtml(pendingStorageAppName)}.` : `После настройки Hub перезапустится. Затем повторите установку «${escapeHtml(pendingStorageAppName)}».`}</p>` : ""}
+        ${storageDrives.length
+          ? `<label class="storage-dialog__field"><span>${language === "en" ? "Drive" : "Диск"}</span><select id="storage-drive">${storageDrives.map((drive) => `<option value="${escapeAttribute(drive)}" ${drive === storageDriveSelection ? "selected" : ""}>${escapeHtml(drive)}</option>`).join("")}</select></label>`
+          : `<p class="storage-dialog__error">${language === "en" ? "No available drives were found." : "Не удалось найти доступные диски."}</p>`}
+        <div class="storage-dialog__actions"><button class="button button--secondary" data-storage-action="cancel">${language === "en" ? "Cancel" : "Отмена"}</button><button class="button button--primary" data-storage-action="save" ${storageDrives.length ? "" : "disabled"}>${language === "en" ? "Use this drive" : "Использовать диск"}</button></div>
+      </section></div>`
+    : "";
 
   return `
     <div class="app-shell">
@@ -231,7 +273,8 @@ export function renderApp({
         <div class="workspace-scroll"><div class="page-content">${page}</div></div>
         <div class="toast-region" aria-live="polite"></div>
       </main>
-    </div>`;
+    </div>
+    ${storageDialog}`;
 }
 
 export function renderAuth({ mode, pending, message, configError, language = "ru" }) {

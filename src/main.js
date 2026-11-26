@@ -17,6 +17,13 @@ import { renderApp, renderAuth } from "./ui/render.js";
 const root = document.querySelector("#app");
 const nativeWindow = isTauri() ? getCurrentWindow() : null;
 const updaterEnabled = import.meta.env.VITE_UPDATER_ENABLED === "true";
+const hubInstaller = {
+  id: "hub",
+  repository: "Limon-Digital-Technologies/LimonDT-hub",
+  assetName: "Limon-Hub-windows-x64.msi",
+  checksumName: "Limon-Hub-windows-x64.msi.sha256",
+  fileName: "Limon-Hub-windows-x64.msi",
+};
 const legacyStorageKey = "limon-hub-preferences";
 const defaultSettings = {
   animations: true,
@@ -48,10 +55,21 @@ const state = {
   updaterChecking: false,
   updateInstalling: false,
   availableUpdate: null,
+  storageRoot: null,
+  storageDrives: [],
+  storageDriveSelection: "",
+  storageDialogOpen: false,
+  pendingStorageAppId: null,
+  storageError: null,
+  storageLoaded: false,
+  storageNeedsRestart: false,
+  hubRelocationRequired: false,
+  hubRelocationPending: false,
 };
 let nativeAppearanceRequest = "";
 let nativeAppearanceRevision = 0;
 let nativeAppearanceTask = Promise.resolve();
+let storageInfoPromise = null;
 
 function preferencesKey(userId) {
   return `limon-hub-preferences:${userId}`;
@@ -208,6 +226,9 @@ function render({ keepScroll = false } = {}) {
     updateAvailableVersion: state.availableUpdate?.version ?? null,
     version: packageJson.version,
     language: state.settings.language,
+    pendingStorageAppName: state.apps.find((app) => app.id === state.pendingStorageAppId)?.name ?? "",
+    hubRelocationRequired: state.hubRelocationRequired,
+    hubRelocationPending: state.hubRelocationPending,
   });
   if (keepScroll) root.querySelector(".workspace-scroll").scrollTop = scrollTop;
   applyAppearancePreferences();
@@ -216,6 +237,44 @@ function render({ keepScroll = false } = {}) {
     button.classList.toggle("is-on", value);
     button.setAttribute("aria-checked", String(value));
   });
+}
+
+function loadStorageInfo() {
+  if (storageInfoPromise) return storageInfoPromise;
+  storageInfoPromise = (async () => {
+  if (!isTauri()) {
+    state.storageLoaded = true;
+    return;
+  }
+  try {
+    const storageInfo = await invoke("get_storage_info");
+    state.storageRoot = storageInfo.root;
+    state.storageDrives = Array.isArray(storageInfo.drives) ? storageInfo.drives : [];
+    state.storageError = storageInfo.migrationError || null;
+    state.hubRelocationRequired = storageInfo.hubRelocationRequired === true;
+    state.storageDriveSelection = state.storageDrives[0] || "";
+    if (state.storageError) {
+      console.error("[Limon Hub] Shared storage migration failed:", state.storageError);
+    }
+  } catch (error) {
+    state.storageError = errorMessage(error);
+    console.error("[Limon Hub] Could not load shared storage settings:", error);
+  } finally {
+    state.storageLoaded = true;
+    render();
+    if (state.storageError && state.user) {
+      showToast(`Ошибка общего хранилища: ${state.storageError}`);
+    }
+  }
+  })();
+  return storageInfoPromise;
+}
+
+function openStorageSetup(app = null) {
+  state.pendingStorageAppId = app?.id ?? null;
+  state.storageDriveSelection ||= state.storageDrives[0] || "";
+  state.storageDialogOpen = true;
+  render();
 }
 
 function showToast(message) {
@@ -233,6 +292,36 @@ function showToast(message) {
 
 function fetchAppResource(url, options) {
   return isTauri() ? tauriFetch(url, options) : fetch(url, options);
+}
+
+async function relocateHubInstallation() {
+  if (!state.hubRelocationRequired || state.hubRelocationPending) return;
+  state.hubRelocationPending = true;
+  render();
+  try {
+    const { installerBytes } = await downloadVerifiedMsi(hubInstaller, fetchAppResource);
+    await mkdir("installers", { baseDir: BaseDirectory.AppCache, recursive: true });
+    await writeFile(`installers/${hubInstaller.fileName}`, installerBytes, {
+      baseDir: BaseDirectory.AppCache,
+    });
+    const scheduled = await invoke("relocate_hub_to_storage", {
+      fileName: hubInstaller.fileName,
+    });
+    state.hubRelocationRequired = false;
+    state.hubRelocationPending = false;
+    render();
+    if (scheduled) {
+      showToast("Установщик переносит Hub в общую папку. Приложение перезапустится автоматически.");
+    } else {
+      await relaunch();
+    }
+  } catch (error) {
+    state.hubRelocationPending = false;
+    state.hubRelocationRequired = true;
+    console.error("[Limon Hub] Could not relocate Hub installation:", error);
+    render();
+    showToast(`Не удалось перенести Hub: ${errorMessage(error)}. Повторите попытку в настройках.`);
+  }
 }
 
 async function loadAppCatalog() {
@@ -328,6 +417,21 @@ async function installHubUpdate() {
 }
 
 async function installApp(app) {
+  if (isTauri()) {
+    if (!state.storageLoaded) await loadStorageInfo();
+    if (state.storageError) {
+      showToast(`Сначала устраните ошибку общего хранилища: ${state.storageError}`);
+      return;
+    }
+    if (state.storageNeedsRestart) {
+      showToast("Перезапустите Hub, чтобы применить новое хранилище.");
+      return;
+    }
+    if (!state.storageRoot) {
+      openStorageSetup(app);
+      return;
+    }
+  }
   if (state.installingApps.has(app.id)) return;
   state.installingApps.add(app.id);
   state.installStatuses.set(app.id, "Подключаемся к GitHub…");
@@ -505,6 +609,52 @@ root.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.storageOpen !== undefined) {
+    openStorageSetup();
+    return;
+  }
+
+  if (target.dataset.storageAction === "cancel") {
+    state.storageDialogOpen = false;
+    state.pendingStorageAppId = null;
+    render();
+    return;
+  }
+
+  if (target.dataset.storageAction === "relocate-hub") {
+    await relocateHubInstallation();
+    return;
+  }
+
+  if (target.dataset.storageAction === "save") {
+    const drive = root.querySelector("#storage-drive")?.value;
+    if (!drive) {
+      showToast("Выберите доступный диск.");
+      return;
+    }
+    target.disabled = true;
+    try {
+      state.storageRoot = await invoke("configure_storage_root", { drive });
+      state.storageDialogOpen = false;
+      state.storageNeedsRestart = true;
+      const storageInfo = await invoke("get_storage_info");
+      state.hubRelocationRequired = storageInfo.hubRelocationRequired === true;
+      render();
+      if (state.hubRelocationRequired) {
+        await relocateHubInstallation();
+      } else {
+        showToast("Папка создана. Перезапускаем Hub и переносим его данные…");
+        await relaunch();
+      }
+    } catch (error) {
+      state.storageError = errorMessage(error);
+      console.error("[Limon Hub] Could not configure shared storage:", error);
+      render();
+      showToast(`Не удалось настроить хранилище: ${state.storageError}`);
+    }
+    return;
+  }
+
   if (target.dataset.authAction === "sign-out") {
     target.disabled = true;
     try {
@@ -594,6 +744,11 @@ root.addEventListener("click", async (event) => {
   }
 });
 
+root.addEventListener("change", (event) => {
+  if (event.target.id !== "storage-drive") return;
+  state.storageDriveSelection = event.target.value;
+});
+
 root.addEventListener("submit", (event) => {
   if (event.target.id !== "auth-form") return;
   event.preventDefault();
@@ -628,6 +783,11 @@ document.addEventListener("keydown", (event) => {
     state.query = "";
     render();
   }
+  if (event.key === "Escape" && state.storageDialogOpen) {
+    state.storageDialogOpen = false;
+    state.pendingStorageAppId = null;
+    render();
+  }
 });
 
 if (supabase) {
@@ -655,6 +815,9 @@ if (supabase) {
     if (!state.user) loadUnauthenticatedPreferences();
     state.authLoading = false;
     render();
+    if (state.storageError) {
+      showToast(`Ошибка общего хранилища: ${state.storageError}`);
+    }
   });
 } else {
   state.authLoading = false;
@@ -662,3 +825,4 @@ if (supabase) {
 }
 
 render();
+void loadStorageInfo();

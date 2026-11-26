@@ -40,6 +40,18 @@ test("rejects catalog entries that point outside Limon GitHub repositories", () 
   );
 });
 
+test("accepts a missing checksum asset when GitHub release metadata provides the digest", () => {
+  const notesRow = {
+    ...row,
+    id: "notes",
+    repository: "Limon-Digital-Technologies/limonDT-notes",
+    asset_name: "Limon.Notes_1.0.0_x64_en-US.msi",
+    checksum_name: null,
+  };
+
+  assert.equal(mapCatalogRow(notesRow).checksumName, null);
+});
+
 test("loads published catalog entries and reports Supabase errors", async () => {
   const calls = [];
   const client = {

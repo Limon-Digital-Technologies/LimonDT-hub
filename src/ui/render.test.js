@@ -95,6 +95,48 @@ test("settings support English and appearance choices", () => {
   assert.match(html, /Limon Hub update/);
 });
 
+test("settings expose one-time shared storage setup", () => {
+  const html = renderApp({
+    ...baseProps,
+    activePage: "settings",
+    language: "ru",
+    settings: { theme: "light", appearance: "standard", animations: true, compact: false },
+    storageRoot: null,
+  });
+
+  assert.match(html, /data-storage-open/);
+  assert.match(html, /Выбрать диск/);
+});
+
+test("settings offer Hub relocation when its installation is outside shared storage", () => {
+  const html = renderApp({
+    ...baseProps,
+    activePage: "settings",
+    settings: { theme: "light", appearance: "standard", animations: true, compact: false },
+    storageRoot: "D:\\LimonDT\\user",
+    hubRelocationRequired: true,
+  });
+
+  assert.match(html, /Hub ещё установлен в прежнем месте/);
+  assert.match(html, /data-storage-action="relocate-hub"/);
+  assert.match(html, /Перенести Hub/);
+});
+
+test("storage setup modal only offers drive selection", () => {
+  const html = renderApp({
+    ...baseProps,
+    storageDialogOpen: true,
+    storageDrives: ["C:", "D:"],
+    storageDriveSelection: "D:",
+    pendingStorageAppName: "Limon Notes",
+  });
+
+  assert.match(html, /id="storage-drive"/);
+  assert.match(html, /<option value="D:" selected>D:<\/option>/);
+  assert.match(html, /Limon Notes/);
+  assert.doesNotMatch(html, /type="text"[^>]+storage/i);
+});
+
 test("glass modes use native acrylic and separate Calculator-style surfaces", async () => {
   const { readFile } = await import("node:fs/promises");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
