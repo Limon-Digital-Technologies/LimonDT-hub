@@ -178,16 +178,31 @@ fn migrate_webview_data(
 
     if source.is_dir() {
         let staging = destination.with_extension("migrating");
-        if staging.exists() {
-            return Err(format!(
-                "Найдена незавершённая папка переноса данных {app_id}; исходные данные сохранены."
-            ));
+        match fs::symlink_metadata(&staging) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(format!(
+                    "Вместо временной папки переноса данных {app_id} найден файл; исходные данные сохранены."
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Не удалось проверить временную папку переноса данных {app_id}: {error}"
+                ))
+            }
         }
         copy_directory(&source, &staging)
             .map_err(|error| format!("Не удалось перенести данные {app_id}: {error}"))?;
         fs::rename(&staging, destination)
             .map_err(|error| format!("Не удалось завершить перенос данных {app_id}: {error}"))?;
     } else {
+        let staging = destination.with_extension("migrating");
+        if staging.exists() {
+            return Err(format!(
+                "Найдена временная папка переноса данных {app_id}, но исходная папка отсутствует. Данные сохранены."
+            ));
+        }
         fs::create_dir_all(destination)
             .map_err(|error| format!("Не удалось создать папку данных {app_id}: {error}"))?;
     }
@@ -201,7 +216,28 @@ fn migrate_webview_data(
 fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::fs;
 
-    fs::create_dir_all(destination)?;
+    let source_metadata = fs::symlink_metadata(source)?;
+    if !source_metadata.file_type().is_dir() || source_metadata.file_type().is_symlink() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Источник переноса не является обычной папкой.",
+        ));
+    }
+
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Временная папка переноса содержит некорректный путь.",
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(destination)?;
+        }
+        Err(error) => return Err(error),
+    }
+
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
@@ -213,9 +249,35 @@ fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
                 "Символические ссылки в профиле WebView не поддерживаются.",
             ));
         }
+        let destination_type = match fs::symlink_metadata(&destination_path) {
+            Ok(metadata) => {
+                let file_type = metadata.file_type();
+                if file_type.is_symlink() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Символическая ссылка найдена во временной папке переноса.",
+                    ));
+                }
+                Some(file_type)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
         if file_type.is_dir() {
+            if destination_type.is_some_and(|file_type| !file_type.is_dir()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Структура временной папки переноса не совпадает с исходной.",
+                ));
+            }
             copy_directory(&source_path, &destination_path)?;
         } else if file_type.is_file() {
+            if destination_type.is_some_and(|file_type| file_type.is_dir()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Структура временной папки переноса не совпадает с исходной.",
+                ));
+            }
             fs::copy(source_path, destination_path)?;
         }
     }
@@ -260,5 +322,45 @@ mod tests {
         assert!(validate_app_id("calculator").is_ok());
         assert!(validate_app_id("limon-notes").is_ok());
         assert!(validate_app_id("../notes").is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resumes_a_partial_copy_into_the_existing_migration_staging_folder() {
+        use super::copy_directory;
+        use std::{fs, time::SystemTime};
+
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_root = std::env::temp_dir().join(format!(
+            "limon-storage-migration-{}-{unique}",
+            std::process::id()
+        ));
+        let source = test_root.join("source");
+        let staging = test_root.join("target.migrating");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(source.join("preferences.dat"), b"complete source").unwrap();
+        fs::write(staging.join("preferences.dat"), b"partial copy").unwrap();
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested").join("state.dat"), b"nested source").unwrap();
+
+        copy_directory(&source, &staging).unwrap();
+
+        assert_eq!(
+            fs::read(source.join("preferences.dat")).unwrap(),
+            b"complete source"
+        );
+        assert_eq!(
+            fs::read(staging.join("preferences.dat")).unwrap(),
+            b"complete source"
+        );
+        assert_eq!(
+            fs::read(staging.join("nested").join("state.dat")).unwrap(),
+            b"nested source"
+        );
+        fs::remove_dir_all(test_root).unwrap();
     }
 }

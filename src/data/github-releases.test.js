@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { downloadVerifiedMsi, parseSha256Checksum } from "./github-releases.js";
+import { downloadVerifiedMsi, parseSha256Checksum, resolveLatestReleaseTag } from "./github-releases.js";
 
 const app = {
   id: "calculator",
@@ -24,6 +24,25 @@ function response(body, { status = 200, contentLength } = {}) {
     },
   };
 }
+
+test("resolves the latest stable version from the GitHub release tag", async () => {
+  const fetchResource = async () => response({
+    tag_name: "v1.1.0",
+    draft: false,
+    prerelease: false,
+  });
+
+  assert.equal(await resolveLatestReleaseTag({ ...app, name: "Calculator", version: "1.0.1" }, fetchResource), "1.1.0");
+});
+
+test("reports latest-version lookup failures rather than silently using the catalog version", async () => {
+  const fetchResource = async () => response({}, { status: 503 });
+
+  await assert.rejects(
+    resolveLatestReleaseTag({ ...app, name: "Calculator", version: "1.0.1" }, fetchResource),
+    /HTTP 503/,
+  );
+});
 
 test("downloads the selected MSI and checksum from the latest stable release", async () => {
   const checksum = await crypto.subtle.digest("SHA-256", installerBytes);

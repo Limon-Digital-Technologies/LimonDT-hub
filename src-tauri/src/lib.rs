@@ -153,23 +153,33 @@ async fn relocate_hub_to_storage(app: tauri::AppHandle, file_name: String) -> Re
 }
 
 #[tauri::command]
-fn get_installed_apps() -> Result<Vec<String>, String> {
+fn get_installed_apps() -> Result<Vec<serde_json::Value>, String> {
     #[cfg(target_os = "windows")]
     {
         let storage_root = storage::configured_root()?;
+        let registry_entries = uninstall_entries();
         let mut installed = Vec::new();
         for app_id in ["calculator", "notes"] {
-            if let Some(install_dir) = app_install_dir(app_id)? {
-                let is_managed = match &storage_root {
-                    Some(root) => {
-                        let managed_dir = storage::app_install_dir(root, app_id)?;
-                        path_is_within(&install_dir, &managed_dir)
-                    }
-                    None => true,
-                };
-                if is_managed {
-                    installed.push(app_id.to_string());
-                }
+            let install_dir = if let Some(root) = &storage_root {
+                let managed_dir = storage::app_install_dir(root, app_id)?;
+                let executable = managed_dir.join(executable_name(app_id)?);
+                executable.is_file().then_some(managed_dir)
+            } else {
+                app_install_dir(app_id)?
+            };
+            if let Some(install_dir) = install_dir {
+                let expected_name = app_display_name(app_id)?;
+                let version = registry_entries
+                    .iter()
+                    .find(|entry| {
+                        entry.display_name == expected_name
+                            && paths_match(&entry.install_location, &install_dir)
+                    })
+                    .map(|entry| entry.display_version.as_str());
+                installed.push(serde_json::json!({
+                    "id": app_id,
+                    "version": version,
+                }));
             }
         }
         return Ok(installed);
@@ -190,7 +200,7 @@ async fn install_app(
 
     #[cfg(target_os = "windows")]
     {
-        use std::{fs, io::Read, process::Command};
+        use std::{fs, io::Read};
         use tauri::Manager;
 
         let root = storage::configured_root()?
@@ -242,81 +252,90 @@ async fn install_app(
             "{}-install.log",
             file_name.trim_end_matches(".msi")
         ));
+        let elevated_script_path = downloads_dir.join(format!(
+            "{}-elevated-install-{}.ps1",
+            app_id,
+            std::process::id()
+        ));
         let installer_path = msiexec_compatible_path(&installer_path);
         let log_path = msiexec_compatible_path(&log_path);
+        let elevated_script_path = msiexec_compatible_path(&elevated_script_path);
 
         tauri::async_runtime::spawn_blocking(move || {
             if let (Some(old_dir), Some(product_code)) =
                 (existing_install.as_ref(), existing_product_code.as_ref())
             {
-                let uninstall_status = Command::new("msiexec.exe")
-                    .args(["/x", product_code, "/qn", "/norestart", "/L*v"])
-                    .arg(&log_path)
-                    .status()
-                    .map_err(|error| format!("Не удалось начать перенос приложения: {error}"))?;
-                if !msi_status_succeeded(&uninstall_status) {
+                let uninstall_args = vec![
+                    "/x".to_string(),
+                    product_code.clone(),
+                    "/qn".to_string(),
+                    "/norestart".to_string(),
+                    "/L*v".to_string(),
+                    log_path.to_string_lossy().into_owned(),
+                ];
+                let uninstall_code = run_msi_command(
+                    &uninstall_args,
+                    &log_path,
+                    &elevated_script_path,
+                )?;
+                if !msi_exit_code_succeeded(uninstall_code) {
                     return Err(format!(
-                        "Не удалось удалить старую копию приложения (код {:?}). Она осталась на месте.",
-                        uninstall_status.code()
+                        "Не удалось удалить старую копию приложения (код {uninstall_code}). Она осталась на месте."
                     ));
                 }
 
-                let install_status = Command::new("msiexec.exe")
-                    .args(["/i"])
-                    .arg(&installer_path)
-                    .arg(format!("INSTALLDIR={}", install_dir.display()))
-                    .args(["/qn", "/norestart", "/L*v"])
-                    .arg(&log_path)
-                    .status()
-                    .map_err(|error| format!("Не удалось установить приложение в общую папку: {error}"));
-                match install_status {
-                    Ok(status) if msi_status_succeeded(&status) => Ok(()),
+                let install_args = msi_install_arguments(&installer_path, &install_dir, &log_path);
+                let install_result =
+                    run_msi_command(&install_args, &log_path, &elevated_script_path);
+                match install_result {
+                    Ok(code) if msi_exit_code_succeeded(code) => Ok(()),
                     install_result => {
                         let install_error = match install_result {
-                            Ok(status) => format!("код {:?}", status.code()),
+                            Ok(code) => format!("код {code}"),
                             Err(error) => error,
                         };
-                        let rollback = Command::new("msiexec.exe")
-                            .args(["/i"])
-                            .arg(&installer_path)
-                            .arg(format!("INSTALLDIR={}", old_dir.display()))
-                            .args(["/qn", "/norestart", "/L*v"])
-                            .arg(&log_path)
-                            .status();
+                        let rollback_args =
+                            msi_install_arguments(&installer_path, old_dir, &log_path);
+                        let rollback = run_msi_command(
+                            &rollback_args,
+                            &log_path,
+                            &elevated_script_path,
+                        );
                         match rollback {
-                            Ok(status) if msi_status_succeeded(&status) => Err(format!(
+                            Ok(code) if msi_exit_code_succeeded(code) => Err(format!(
                                 "Перенос не удался; приложение восстановлено в исходной папке: {}. Результат установки: {}",
                                 old_dir.display(),
                                 install_error
                             )),
-                            rollback_result => Err(format!(
-                                "Перенос не удался, и автоматическое восстановление также завершилось ошибкой: {:?}. MSI сохранён здесь: {}",
-                                rollback_result.err(),
+                            Ok(code) => Err(format!(
+                                "Перенос не удался ({install_error}); автоматическое восстановление также завершилось с кодом {code}. MSI сохранён здесь: {}",
+                                installer_path.display()
+                            )),
+                            Err(error) => Err(format!(
+                                "Перенос не удался ({install_error}); автоматическое восстановление также завершилось ошибкой: {error}. MSI сохранён здесь: {}",
                                 installer_path.display()
                             )),
                         }
                     }
                 }
             } else {
-                let status = Command::new("msiexec.exe")
-                    .args(["/i"])
-                    .arg(&installer_path)
-                    .arg(format!("INSTALLDIR={}", install_dir.display()))
-                    .args(["/qn", "/norestart", "/L*v"])
-                    .arg(&log_path)
-                    .status()
-                    .map_err(|error| {
-                        format!(
-                            "Не удалось запустить Windows Installer: {error}. MSI сохранён здесь: {}",
-                            installer_path.display()
-                        )
-                    })?;
-                if msi_status_succeeded(&status) {
+                let install_args = msi_install_arguments(&installer_path, &install_dir, &log_path);
+                let code = run_msi_command(
+                    &install_args,
+                    &log_path,
+                    &elevated_script_path,
+                )
+                .map_err(|error| {
+                    format!(
+                        "{error}. MSI сохранён здесь: {}",
+                        installer_path.display()
+                    )
+                })?;
+                if msi_exit_code_succeeded(code) {
                     Ok(())
                 } else {
                     Err(format!(
-                        "Установка завершилась с кодом {:?}. MSI сохранён здесь: {}",
-                        status.code(),
+                        "Установка завершилась с кодом {code}. MSI сохранён здесь: {}",
                         installer_path.display()
                     ))
                 }
@@ -429,8 +448,172 @@ fn is_msi_file_header(header: &[u8; 8]) -> bool {
     header == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
 }
 
-fn msi_status_succeeded(status: &std::process::ExitStatus) -> bool {
-    status.success() || status.code() == Some(3010)
+fn msi_exit_code_succeeded(code: i32) -> bool {
+    code == 0 || code == 3010
+}
+
+#[cfg(target_os = "windows")]
+fn msi_install_arguments(
+    installer: &std::path::Path,
+    install_dir: &std::path::Path,
+    log_path: &std::path::Path,
+) -> Vec<String> {
+    vec![
+        "/i".to_string(),
+        installer.to_string_lossy().into_owned(),
+        format!("INSTALLDIR={}", install_dir.display()),
+        "/qn".to_string(),
+        "/norestart".to_string(),
+        "/L*v".to_string(),
+        log_path.to_string_lossy().into_owned(),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn run_msi_command(
+    arguments: &[String],
+    log_path: &std::path::Path,
+    elevated_script_path: &std::path::Path,
+) -> Result<i32, String> {
+    use std::{fs, process::Command};
+
+    let status = Command::new("msiexec.exe")
+        .args(arguments)
+        .status()
+        .map_err(|error| format!("Не удалось запустить Windows Installer: {error}"))?;
+    let code = status.code().unwrap_or(-1);
+    if code != 1603 {
+        return Ok(code);
+    }
+
+    let log = fs::read(log_path)
+        .map_err(|error| format!("Не удалось прочитать журнал Windows Installer: {error}"))?;
+    if !msi_log_requires_elevation(&log) {
+        return Ok(code);
+    }
+
+    run_msi_command_elevated(arguments, elevated_script_path)
+}
+
+#[cfg(target_os = "windows")]
+fn run_msi_command_elevated(
+    arguments: &[String],
+    script_path: &std::path::Path,
+) -> Result<i32, String> {
+    use std::{fs, process::Command};
+
+    let arguments = msi_argument_line(arguments);
+    let script = elevated_msi_script(&arguments);
+    write_powershell_script(script_path, &script)?;
+
+    let result = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(script_path)
+        .output()
+        .map_err(|error| format!("Не удалось запросить права администратора: {error}"));
+    let _ = fs::remove_file(script_path);
+    let output = result?;
+    let code = output.status.code().unwrap_or(-1);
+    if code == 1223 {
+        return Err(
+            "Запрос Windows на установку с правами администратора был отменён.".to_string(),
+        );
+    }
+    if code == 50001 || code == -1 {
+        let details = String::from_utf8_lossy(&output.stderr);
+        let details = details.trim();
+        return Err(if details.is_empty() {
+            format!("Не удалось запустить установщик с правами администратора (код {code}).")
+        } else {
+            format!(
+                "Не удалось запустить установщик с правами администратора (код {code}): {details}"
+            )
+        });
+    }
+    Ok(code)
+}
+
+fn msi_requires_elevation(log: &str) -> bool {
+    log.to_ascii_lowercase().contains("error 1925")
+}
+
+fn msi_log_requires_elevation(bytes: &[u8]) -> bool {
+    let text = if bytes.starts_with(&[0xff, 0xfe]) {
+        decode_msi_log_utf16(&bytes[2..], true)
+    } else if bytes.starts_with(&[0xfe, 0xff]) {
+        decode_msi_log_utf16(&bytes[2..], false)
+    } else {
+        let sample = &bytes[..bytes.len().min(128)];
+        let even_nuls = sample.iter().step_by(2).filter(|byte| **byte == 0).count();
+        let odd_nuls = sample
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .filter(|byte| **byte == 0)
+            .count();
+        if odd_nuls > sample.len() / 8 {
+            decode_msi_log_utf16(bytes, true)
+        } else if even_nuls > sample.len() / 8 {
+            decode_msi_log_utf16(bytes, false)
+        } else {
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+    };
+    msi_requires_elevation(&text)
+}
+
+fn decode_msi_log_utf16(bytes: &[u8], little_endian: bool) -> String {
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| {
+            if little_endian {
+                u16::from_le_bytes([pair[0], pair[1]])
+            } else {
+                u16::from_be_bytes([pair[0], pair[1]])
+            }
+        })
+        .collect::<Vec<_>>();
+    String::from_utf16_lossy(&units)
+}
+
+fn msi_argument_line(arguments: &[String]) -> String {
+    arguments
+        .iter()
+        .map(|argument| {
+            if let Some(path) = argument.strip_prefix("INSTALLDIR=") {
+                format!("INSTALLDIR=\"{path}\"")
+            } else if argument.chars().any(char::is_whitespace) {
+                format!("\"{argument}\"")
+            } else {
+                argument.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(target_os = "windows")]
+fn elevated_msi_script(argument_line: &str) -> String {
+    let argument_line = powershell_literal(argument_line);
+    format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         try {{\n\
+           $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList {argument_line} -Verb RunAs -Wait -PassThru\n\
+           exit $process.ExitCode\n\
+         }} catch {{\n\
+           if ($_.Exception.NativeErrorCode -eq 1223) {{ exit 1223 }}\n\
+           [Console]::Error.WriteLine($_.Exception.Message)\n\
+           exit 50001\n\
+         }}\n"
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -499,7 +682,7 @@ fn write_powershell_script(path: &std::path::Path, script: &str) -> Result<(), S
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|error| format!("Не удалось создать сценарий переноса Hub: {error}"))?;
+        .map_err(|error| format!("Не удалось создать сценарий PowerShell: {error}"))?;
     file.write_all(&[0xff, 0xfe])
         .and_then(|_| {
             for unit in script.encode_utf16() {
@@ -507,7 +690,7 @@ fn write_powershell_script(path: &std::path::Path, script: &str) -> Result<(), S
             }
             Ok(())
         })
-        .map_err(|error| format!("Не удалось записать сценарий переноса Hub: {error}"))
+        .map_err(|error| format!("Не удалось записать сценарий PowerShell: {error}"))
 }
 
 fn path_is_within(path: &std::path::Path, directory: &std::path::Path) -> bool {
@@ -536,7 +719,10 @@ fn msiexec_compatible_path(path: &std::path::Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod msi_tests {
-    use super::{ensure_msi_file_name, is_msi_file_header, msiexec_compatible_path};
+    use super::{
+        ensure_msi_file_name, is_msi_file_header, msi_argument_line, msi_exit_code_succeeded,
+        msi_log_requires_elevation, msi_requires_elevation, msiexec_compatible_path,
+    };
     use std::path::Path;
 
     #[test]
@@ -561,6 +747,61 @@ mod msi_tests {
     }
 
     #[test]
+    fn retries_elevation_only_for_windows_installer_error_1925() {
+        assert!(msi_requires_elevation(
+            "Error 1925. You do not have sufficient privileges."
+        ));
+        assert!(msi_requires_elevation("ERROR 1925"));
+        assert!(!msi_requires_elevation(
+            "Installation failed with error 1603."
+        ));
+    }
+
+    #[test]
+    fn detects_elevation_error_in_unicode_installer_logs() {
+        let log = "\u{FEFF}Error 1925. Administrator privileges are required."
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        assert!(msi_log_requires_elevation(&log));
+
+        let log_without_bom = "Error 1925. Administrator privileges are required."
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        assert!(msi_log_requires_elevation(&log_without_bom));
+
+        assert!(msi_log_requires_elevation(
+            b"Error 1925. Administrator privileges are required."
+        ));
+    }
+
+    #[test]
+    fn quotes_msi_paths_and_install_directory_for_elevated_execution() {
+        let arguments = vec![
+            "/i".to_string(),
+            r"C:\Users\user\LimonDT\Downloads\Hub\Limon Notes.msi".to_string(),
+            r"INSTALLDIR=C:\Users\user\LimonDT\Apps\notes".to_string(),
+            "/qn".to_string(),
+            "/norestart".to_string(),
+            "/L*v".to_string(),
+            r"C:\Users\user\LimonDT\Downloads\Limon Hub\install.log".to_string(),
+        ];
+
+        assert_eq!(
+            msi_argument_line(&arguments),
+            r#"/i "C:\Users\user\LimonDT\Downloads\Hub\Limon Notes.msi" INSTALLDIR="C:\Users\user\LimonDT\Apps\notes" /qn /norestart /L*v "C:\Users\user\LimonDT\Downloads\Limon Hub\install.log""#
+        );
+    }
+
+    #[test]
+    fn accepts_msi_success_and_reboot_required_codes() {
+        assert!(msi_exit_code_succeeded(0));
+        assert!(msi_exit_code_succeeded(3010));
+        assert!(!msi_exit_code_succeeded(1603));
+    }
+
+    #[test]
     fn removes_windows_verbatim_prefix_for_msi_exec() {
         assert_eq!(
             msiexec_compatible_path(Path::new(r"\\?\C:\Users\user\Downloads\Limon Hub\app.msi")),
@@ -574,6 +815,21 @@ mod msi_tests {
             msiexec_compatible_path(Path::new(r"C:\Downloads\app.msi")),
             Path::new(r"C:\Downloads\app.msi")
         );
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod msi_elevation_tests {
+    use super::elevated_msi_script;
+
+    #[test]
+    fn starts_the_retry_with_uac_and_returns_the_msi_exit_code() {
+        let script =
+            elevated_msi_script(r#"/i "C:\LimonDT\Downloads\Limon Notes.msi" /qn /norestart"#);
+
+        assert!(script.contains("-Verb RunAs -Wait -PassThru"));
+        assert!(script.contains("exit $process.ExitCode"));
+        assert!(script.contains("NativeErrorCode -eq 1223"));
     }
 }
 
@@ -612,26 +868,16 @@ mod hub_relocation_tests {
 
 #[cfg(target_os = "windows")]
 fn app_install_dir(app_id: &str) -> Result<Option<std::path::PathBuf>, String> {
-    use std::{path::PathBuf, process::Command};
+    use std::path::PathBuf;
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
     ensure_known_app(app_id)?;
     let display_name = app_display_name(app_id)?;
     let executable = executable_name(app_id)?;
     if app_id == "calculator" {
-        const INSTALL_KEY: &str = r"HKCU\Software\limon\Limon Calculator";
-        let output = Command::new("reg.exe")
-            .args(["query", INSTALL_KEY, "/v", "InstallDir"])
-            .output()
-            .map_err(|error| format!("Не удалось проверить установку Limon Calculator: {error}"))?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(install_dir) = stdout.lines().find_map(|line| {
-                let line = line.trim();
-                line.strip_prefix("InstallDir")
-                    .and_then(|value| value.split_once("REG_SZ"))
-                    .map(|(_, value)| value.trim())
-                    .filter(|value| !value.is_empty())
-            }) {
+        let current_user = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok(install_key) = current_user.open_subkey(r"Software\limon\Limon Calculator") {
+            if let Ok(install_dir) = install_key.get_value::<String, _>("InstallDir") {
                 let install_dir = PathBuf::from(install_dir);
                 if install_dir.join(executable).is_file() {
                     return Ok(Some(install_dir));
@@ -645,58 +891,19 @@ fn app_install_dir(app_id: &str) -> Result<Option<std::path::PathBuf>, String> {
 
 #[cfg(target_os = "windows")]
 fn app_product_code(app_id: &str, install_dir: &std::path::Path) -> Result<Option<String>, String> {
-    use std::process::Command;
-
     let expected_display_name = app_display_name(app_id)?;
-    const UNINSTALL_KEYS: [&str; 3] = [
-        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-    ];
-
-    for key in UNINSTALL_KEYS {
-        let output = Command::new("reg.exe")
-            .args(["query", key, "/s"])
-            .output()
-            .map_err(|error| format!("Не удалось найти запись удаления приложения: {error}"))?;
-        if !output.status.success() {
+    for entry in uninstall_entries() {
+        if entry.display_name != expected_display_name
+            || !paths_match(&entry.install_location, install_dir)
+        {
             continue;
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut current_key = String::new();
-        let mut display_name = String::new();
-        let mut install_location = String::new();
-
-        for line in stdout.lines().chain(std::iter::once("")) {
-            let line = line.trim();
-            if line.starts_with("HKEY_") || line.is_empty() {
-                if display_name == expected_display_name
-                    && paths_match(&install_location, install_dir)
-                {
-                    if let Some(product_code) = current_key.rsplit('\\').next() {
-                        if is_msi_product_code(product_code) {
-                            return Ok(Some(product_code.to_string()));
-                        }
-                    }
-                }
-
-                current_key = line.to_string();
-                display_name.clear();
-                install_location.clear();
-                continue;
-            }
-
-            if let Some((name, value)) = line.split_once("REG_SZ") {
-                match name.trim() {
-                    "DisplayName" => display_name = value.trim().to_string(),
-                    "InstallLocation" => install_location = value.trim().to_string(),
-                    _ => {}
-                }
+        if let Some(product_code) = entry.key_name.rsplit('\\').next() {
+            if is_msi_product_code(product_code) {
+                return Ok(Some(product_code.to_string()));
             }
         }
     }
-
     Ok(None)
 }
 
@@ -705,48 +912,81 @@ fn installed_app_location(
     expected_display_name: &str,
     expected_executable: &str,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    use std::{path::PathBuf, process::Command};
+    use std::path::PathBuf;
 
-    const UNINSTALL_KEYS: [&str; 3] = [
-        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-    ];
-
-    for key in UNINSTALL_KEYS {
-        let output = Command::new("reg.exe")
-            .args(["query", key, "/s"])
-            .output()
-            .map_err(|error| format!("Не удалось проверить установленное приложение: {error}"))?;
-        if !output.status.success() {
-            continue;
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut display_name = String::new();
-        let mut install_location = String::new();
-        for line in stdout.lines().chain(std::iter::once("")) {
-            let line = line.trim();
-            if line.starts_with("HKEY_") || line.is_empty() {
-                if display_name == expected_display_name && !install_location.is_empty() {
-                    let path = PathBuf::from(&install_location);
-                    if path.join(expected_executable).is_file() {
-                        return Ok(Some(path));
-                    }
-                }
-                display_name.clear();
-                install_location.clear();
-                continue;
-            }
-            if let Some((name, value)) = line.split_once("REG_SZ") {
-                match name.trim() {
-                    "DisplayName" => display_name = value.trim().to_string(),
-                    "InstallLocation" => install_location = value.trim().to_string(),
-                    _ => {}
-                }
+    for entry in uninstall_entries() {
+        if entry.display_name == expected_display_name && !entry.install_location.is_empty() {
+            let path = PathBuf::from(&entry.install_location);
+            if path.join(expected_executable).is_file() {
+                return Ok(Some(path));
             }
         }
     }
     Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+struct UninstallEntry {
+    key_name: String,
+    display_name: String,
+    install_location: String,
+    display_version: String,
+}
+
+#[cfg(target_os = "windows")]
+fn uninstall_entries() -> Vec<UninstallEntry> {
+    use winreg::{
+        enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
+        RegKey,
+    };
+
+    const UNINSTALL_KEYS: [(&str, &str); 3] = [
+        (
+            "HKLM",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            "HKLM",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            "HKCU",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ];
+
+    let mut entries = Vec::new();
+    for (hive, path) in UNINSTALL_KEYS {
+        let root = match hive {
+            "HKLM" => RegKey::predef(HKEY_LOCAL_MACHINE),
+            _ => RegKey::predef(HKEY_CURRENT_USER),
+        };
+        let Ok(uninstall_key) = root.open_subkey(path) else {
+            continue;
+        };
+        for subkey_name in uninstall_key.enum_keys().flatten() {
+            let Ok(key) = uninstall_key.open_subkey(&subkey_name) else {
+                continue;
+            };
+            let display_name = key
+                .get_value::<String, _>("DisplayName")
+                .unwrap_or_default();
+            if display_name.is_empty() {
+                continue;
+            }
+            entries.push(UninstallEntry {
+                key_name: format!(r"{hive}\{path}\{subkey_name}"),
+                display_name,
+                install_location: key
+                    .get_value::<String, _>("InstallLocation")
+                    .unwrap_or_default(),
+                display_version: key
+                    .get_value::<String, _>("DisplayVersion")
+                    .unwrap_or_default(),
+            });
+        }
+    }
+    entries
 }
 
 fn app_display_name(app_id: &str) -> Result<&'static str, String> {
@@ -760,11 +1000,16 @@ fn app_display_name(app_id: &str) -> Result<&'static str, String> {
 
 #[cfg(target_os = "windows")]
 fn hub_relocation_required(root: &std::path::Path) -> Result<bool, String> {
-    let Some(install_dir) = app_install_dir("hub")? else {
+    if cfg!(debug_assertions) {
         return Ok(false);
-    };
+    }
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Не удалось определить путь Limon Hub: {error}"))?;
+    let install_dir = executable
+        .parent()
+        .ok_or_else(|| "Не удалось определить папку Limon Hub.".to_string())?;
     let target_dir = storage::app_install_dir(root, "hub")?;
-    Ok(!path_is_within(&install_dir, &target_dir))
+    Ok(!path_is_within(install_dir, &target_dir))
 }
 
 #[cfg(not(target_os = "windows"))]

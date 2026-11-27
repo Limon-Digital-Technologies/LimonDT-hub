@@ -24,6 +24,7 @@ async function findReleaseAssets(app, fetchResource) {
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
+      "Cache-Control": "no-cache",
     },
   });
   if (!response.ok) {
@@ -81,10 +82,17 @@ export async function resolveLatestReleaseTag(app, fetchResource) {
       "X-GitHub-Api-Version": "2022-11-28",
     },
   });
-  if (!response.ok) return app.version;
+  if (!response.ok) {
+    throw new Error(`Не удалось проверить последнюю версию ${app.name}: HTTP ${response.status}.`);
+  }
   const release = await response.json();
-  if (!release || typeof release.tag_name !== "string") return app.version;
-  return release.tag_name.replace(/^v/i, "");
+  if (!release || typeof release.tag_name !== "string"
+    || !release.tag_name.trim()
+    || release.draft === true
+    || release.prerelease === true) {
+    throw new Error(`GitHub вернул некорректный стабильный релиз ${app.name}.`);
+  }
+  return release.tag_name.trim().replace(/^v/i, "");
 }
 
 export function parseSha256Checksum(checksumText, installerName) {

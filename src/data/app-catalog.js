@@ -1,5 +1,20 @@
 const allowedColors = new Set(["blue", "purple", "orange", "green"]);
 const organization = "Limon-Digital-Technologies";
+const builtInCatalogRows = [
+  {
+    id: "notes",
+    name: "Limon Notes",
+    category: "Продуктивность",
+    description: "Заметки, списки и упоминания приложений экосистемы Limon.",
+    icon_text: "LN",
+    color: "purple",
+    repository: "Limon-Digital-Technologies/limonDT-notes",
+    asset_name: "Limon.Notes_1.0.1_x64_en-US.msi",
+    checksum_name: null,
+    version: "1.0.1",
+    sort_order: 20,
+  },
+];
 
 function requiredText(value, field, maxLength) {
   if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
@@ -56,5 +71,11 @@ export async function fetchAppCatalog(client) {
 
   if (error) throw new Error(`Не удалось загрузить каталог Supabase: ${error.message}`);
   if (!Array.isArray(data)) throw new Error("Supabase вернул каталог в неизвестном формате.");
-  return data.map(mapCatalogRow);
+  const publishedApps = data.map(mapCatalogRow);
+  const publishedIds = new Set(publishedApps.map((app) => app.id));
+  const fallbackApps = builtInCatalogRows
+    .filter((row) => !publishedIds.has(row.id))
+    .map(mapCatalogRow);
+  return [...publishedApps, ...fallbackApps]
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
 }

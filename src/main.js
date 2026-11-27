@@ -8,6 +8,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import packageJson from "../package.json";
 import { fetchAppCatalog } from "./data/app-catalog.js";
 import { downloadVerifiedMsi, resolveLatestReleaseTag } from "./data/github-releases.js";
+import { readReleaseVersionCache, writeReleaseVersionCache } from "./data/release-version-cache.js";
 import { errorMessage } from "./lib/error-message.js";
 import { normalizeLanguage } from "./lib/i18n.js";
 import { normalizeDownloadHistory, upsertDownloadHistory } from "./lib/download-history.js";
@@ -25,6 +26,7 @@ const hubInstaller = {
   fileName: "Limon-Hub-windows-x64.msi",
 };
 const legacyStorageKey = "limon-hub-preferences";
+const pendingInstallStorageKey = "limon-hub-pending-install";
 const defaultSettings = {
   animations: true,
   compact: false,
@@ -38,7 +40,9 @@ const state = {
   apps: [],
   catalogLoading: false,
   catalogError: null,
+  releaseVersionErrors: new Set(),
   installedApps: new Set(),
+  installedVersions: new Map(),
   installingApps: new Set(),
   installStatuses: new Map(),
   uninstallingApps: new Set(),
@@ -70,6 +74,7 @@ let nativeAppearanceRequest = "";
 let nativeAppearanceRevision = 0;
 let nativeAppearanceTask = Promise.resolve();
 let storageInfoPromise = null;
+let startupFinishPromise = null;
 
 function preferencesKey(userId) {
   return `limon-hub-preferences:${userId}`;
@@ -173,6 +178,20 @@ function syncNativeWindowAppearance() {
   });
 }
 
+function finishStartup() {
+  if (startupFinishPromise) return startupFinishPromise;
+  startupFinishPromise = (async () => {
+    await nativeAppearanceTask;
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    document.documentElement.classList.add("app-ready");
+    const startupScreen = document.querySelector("#startup-screen");
+    if (!startupScreen) return;
+    startupScreen.classList.add("is-leaving");
+    window.setTimeout(() => startupScreen.remove(), 260);
+  })();
+  return startupFinishPromise;
+}
+
 function loadUnauthenticatedPreferences() {
   try {
     const preferences = JSON.parse(localStorage.getItem(legacyStorageKey) || "{}");
@@ -270,6 +289,26 @@ function loadStorageInfo() {
   return storageInfoPromise;
 }
 
+async function resumePendingInstall() {
+  const appId = localStorage.getItem(pendingInstallStorageKey);
+  if (!appId) return;
+  if (!["calculator", "notes"].includes(appId)) {
+    localStorage.removeItem(pendingInstallStorageKey);
+    console.error("[Limon Hub] Discarded an unknown pending app installation:", appId);
+    return;
+  }
+
+  await loadStorageInfo();
+  if (state.storageError || !state.storageRoot) return;
+  const app = state.apps.find((item) => item.id === appId);
+  if (!app) return;
+
+  localStorage.removeItem(pendingInstallStorageKey);
+  state.activePage = "apps";
+  render();
+  void installApp(app);
+}
+
 function openStorageSetup(app = null) {
   state.pendingStorageAppId = app?.id ?? null;
   state.storageDriveSelection ||= state.storageDrives[0] || "";
@@ -327,13 +366,21 @@ async function relocateHubInstallation() {
 async function loadAppCatalog() {
   state.catalogLoading = true;
   state.catalogError = null;
+  state.releaseVersionErrors = new Set();
   render();
+  let catalog;
+  let cachedVersions = {};
   try {
-    state.apps = await fetchAppCatalog(supabase);
-    render();
-    void Promise.all(state.apps.map(async (app) => {
-      app.version = await resolveLatestReleaseTag(app, fetchAppResource);
-    })).then(() => render()).catch(() => {});
+    catalog = await fetchAppCatalog(supabase);
+    try {
+      cachedVersions = readReleaseVersionCache(localStorage);
+    } catch (error) {
+      console.warn("[Limon Hub] Could not read cached application versions:", error);
+    }
+    state.apps = catalog.map((app) => ({
+      ...app,
+      version: cachedVersions[app.id] || app.version,
+    }));
   } catch (error) {
     state.catalogError = error;
     state.apps = [];
@@ -341,23 +388,72 @@ async function loadAppCatalog() {
     state.catalogLoading = false;
     render();
   }
+  if (!catalog) return;
+
+  void refreshLatestVersions(state.apps, cachedVersions);
+}
+
+async function refreshLatestVersions(currentCatalog, cachedVersions) {
+  const latestVersions = await Promise.allSettled(
+    currentCatalog.map(async (app) => ({
+      id: app.id,
+      version: await resolveLatestReleaseTag(app, fetchAppResource),
+    })),
+  );
+  if (state.apps !== currentCatalog) return;
+
+  for (const [index, result] of latestVersions.entries()) {
+    if (result.status === "fulfilled") {
+      const { id, version } = result.value;
+      currentCatalog[index].version = version;
+      delete currentCatalog[index].versionError;
+      cachedVersions[id] = version;
+    } else {
+      const app = currentCatalog[index];
+      app.versionError = errorMessage(result.reason);
+      state.releaseVersionErrors.add(app.id);
+      console.warn(`[Limon Hub] Could not check the latest release for ${app.id}:`, result.reason);
+    }
+  }
+  try {
+    writeReleaseVersionCache(localStorage, cachedVersions);
+  } catch (error) {
+    console.warn("[Limon Hub] Could not save cached application versions:", error);
+  }
+  render();
 }
 
 async function refreshInstalledApps() {
   if (!isTauri()) {
     state.installedApps = new Set();
+    state.installedVersions = new Map();
     return;
   }
-  const installedIds = await invoke("get_installed_apps");
-  const knownApps = new Set(state.apps.map((app) => app.id));
-  state.installedApps = new Set(installedIds.filter((id) => knownApps.has(id)));
+  const installedEntries = await invoke("get_installed_apps");
+  const knownApps = new Set(["calculator", "notes"]);
+  const installedVersions = new Map(
+    installedEntries
+      .filter((entry) => typeof entry === "object" && entry && typeof entry.version === "string")
+      .map((entry) => [entry.id, entry.version]),
+  );
+  state.installedApps = new Set(installedEntries
+    .map((entry) => typeof entry === "string" ? entry : entry?.id)
+    .filter((id) => knownApps.has(id)));
+  state.installedVersions = new Map(
+    [...state.installedApps].map((id) => [
+      id,
+      installedVersions.get(id) || state.downloads.find((download) => download.id === id)?.version || null,
+    ]),
+  );
 }
 
-async function waitForInstalledApp(appId, attempts = 30) {
+async function waitForInstalledApp(appId, attempts = 4) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     await refreshInstalledApps();
     if (state.installedApps.has(appId)) return true;
-    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    if (attempt + 1 < attempts) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
   }
   return false;
 }
@@ -461,8 +557,10 @@ async function installApp(app) {
       await writeFile(`${installerDirectory}/${app.fileName}`, installerBytes, {
         baseDir: BaseDirectory.AppCache,
       });
+      state.installStatuses.set(app.id, `Устанавливаем ${app.name}…`);
+      render({ keepScroll: true });
       await invoke("install_app", { appId: app.id, fileName: app.fileName });
-      state.installStatuses.set(app.id, "Завершите установку в окне Windows…");
+      state.installStatuses.set(app.id, "Проверяем установленное приложение…");
       render({ keepScroll: true });
       const installed = await waitForInstalledApp(app.id);
       if (!installed) {
@@ -488,6 +586,9 @@ async function installApp(app) {
       downloadedAt: new Date().toISOString(),
       version: normalizedReleaseVersion,
     });
+    if (state.installedApps.has(app.id)) {
+      state.installedVersions.set(app.id, normalizedReleaseVersion);
+    }
     if (isTauri()) state.activePage = "library";
     state.query = "";
     persistPreferences();
@@ -634,6 +735,9 @@ root.addEventListener("click", async (event) => {
     }
     target.disabled = true;
     try {
+      if (state.pendingStorageAppId) {
+        localStorage.setItem(pendingInstallStorageKey, state.pendingStorageAppId);
+      }
       state.storageRoot = await invoke("configure_storage_root", { drive });
       state.storageDialogOpen = false;
       state.storageNeedsRestart = true;
@@ -643,7 +747,7 @@ root.addEventListener("click", async (event) => {
       if (state.hubRelocationRequired) {
         await relocateHubInstallation();
       } else {
-        showToast("Папка создана. Перезапускаем Hub и переносим его данные…");
+        showToast("Папка создана. Hub перезапустится и продолжит установку приложения…");
         await relaunch();
       }
     } catch (error) {
@@ -685,7 +789,7 @@ root.addEventListener("click", async (event) => {
   }
 
   if (target.hasAttribute("data-catalog-retry")) {
-    void loadAppCatalog().then(refreshInstalledApps).then(render).catch((error) => {
+    void Promise.all([loadAppCatalog(), refreshInstalledApps()]).then(render).catch((error) => {
       render();
       showToast(`Не удалось обновить библиотеку: ${errorMessage(error)}`);
     });
@@ -797,7 +901,10 @@ if (supabase) {
     state.user = nextUser ? userProfile(nextUser) : null;
     if (state.user && state.user.id !== previousId) {
       loadPreferences(state.user.id);
-      void loadAppCatalog().then(refreshInstalledApps).then(render).catch((error) => {
+      void Promise.all([loadAppCatalog(), refreshInstalledApps()]).then(async () => {
+        render();
+        await resumePendingInstall();
+      }).catch((error) => {
         render();
         showToast(`Не удалось проверить приложения на этом устройстве: ${errorMessage(error)}`);
       });
@@ -815,6 +922,7 @@ if (supabase) {
     if (!state.user) loadUnauthenticatedPreferences();
     state.authLoading = false;
     render();
+    void finishStartup();
     if (state.storageError) {
       showToast(`Ошибка общего хранилища: ${state.storageError}`);
     }
@@ -825,4 +933,14 @@ if (supabase) {
 }
 
 render();
+if (!supabase) void finishStartup();
+else {
+  window.setTimeout(() => {
+    if (startupFinishPromise) return;
+    state.authLoading = false;
+    loadUnauthenticatedPreferences();
+    render();
+    void finishStartup();
+  }, 10000);
+}
 void loadStorageInfo();

@@ -52,6 +52,25 @@ test("accepts a missing checksum asset when GitHub release metadata provides the
   assert.equal(mapCatalogRow(notesRow).checksumName, null);
 });
 
+test("includes Notes when Supabase has not published its catalog entry yet", async () => {
+  const client = {
+    from() {
+      return {
+        select() { return this; },
+        eq() { return this; },
+        order() { return this; },
+        then(resolve) { resolve({ data: [row], error: null }); },
+      };
+    },
+  };
+
+  const entries = await fetchAppCatalog(client);
+
+  assert.deepEqual(entries.map((app) => app.id), ["calculator", "notes"]);
+  assert.equal(entries[1].repository, "Limon-Digital-Technologies/limonDT-notes");
+  assert.equal(entries[1].version, "1.0.1");
+});
+
 test("loads published catalog entries and reports Supabase errors", async () => {
   const calls = [];
   const client = {
@@ -77,7 +96,7 @@ test("loads published catalog entries and reports Supabase errors", async () => 
     },
   };
   const entries = await fetchAppCatalog(client);
-  assert.equal(entries.length, 1);
+  assert.deepEqual(entries.map((app) => app.id), ["calculator", "notes"]);
   assert.deepEqual(calls.slice(0, 3), [
     ["from", "app_catalog"],
     ["select", "id,name,category,description,icon_text,color,repository,asset_name,checksum_name,version,sort_order"],

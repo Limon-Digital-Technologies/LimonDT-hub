@@ -33,11 +33,28 @@ test("library offers launch and uninstall only for installed apps", () => {
     activePage: "library",
     installedApps: new Set(["calculator"]),
   });
-
   assert.match(html, /data-app-action="calculator" data-action="launch"/);
   assert.match(html, /data-remove-app="calculator"/);
   assert.match(html, /Запустить<\/button>/);
   assert.match(html, /Удалить<\/button>/);
+});
+
+test("library and download history show the corresponding installed or downloaded version", () => {
+  const libraryHtml = renderApp({
+    ...baseProps,
+    activePage: "library",
+    installedApps: new Set(["calculator"]),
+    installedVersions: new Map([["calculator", "1.0.0"]]),
+  });
+  const downloadsHtml = renderApp({
+    ...baseProps,
+    activePage: "downloads",
+    downloads: [{ id: "calculator", version: "0.9.2", fileName: calculator.fileName }],
+  });
+
+  assert.match(libraryHtml, /v1\.0\.0/);
+  assert.match(downloadsHtml, /v0\.9\.2/);
+  assert.doesNotMatch(downloadsHtml, /v1\.0\.1/);
 });
 
 test("empty library does not list catalog apps as installed", () => {
@@ -65,6 +82,7 @@ test("install card shows the current download stage", () => {
 
   assert.match(html, /Скачиваем установщик…/);
   assert.match(html, /aria-busy="true"/);
+  assert.match(html, /class="button-spinner"/);
 });
 
 test("catalog text is rendered as text rather than markup", () => {

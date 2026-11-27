@@ -11,14 +11,14 @@ function navButton(item, activePage, downloadCount) {
     </button>`;
 }
 
-function appCard(app, { installed = false, downloaded = false, installing = false, installStatus, uninstalling = false, compact = false, downloadOnly = false, language = "ru" } = {}) {
+function appCard(app, { installed = false, downloaded = false, installing = false, installStatus, uninstalling = false, compact = false, downloadOnly = false, version = app.version, language = "ru" } = {}) {
   const action = installing ? installStatus || (language === "en" ? "Installing…" : "Устанавливаем…") : installed ? t(language, "launch") : t(language, "install");
   const iconMarkup = app.id === "calculator"
     ? '<img class="app-icon__image" src="/assets/calculator-logo.png" alt="" />'
     : `<span>${escapeHtml(app.icon)}</span>`;
   const actionMarkup = downloadOnly
     ? ""
-    : `<button class="button button--primary app-action" data-app-action="${app.id}" data-action="${installed ? "launch" : "install"}" ${installing || uninstalling ? "disabled aria-busy=\"true\"" : ""}>${installing ? "" : icon(installed ? "arrow" : "download")} ${action}</button>`;
+    : `<button class="button button--primary app-action" data-app-action="${app.id}" data-action="${installed ? "launch" : "install"}" ${installing || uninstalling ? "disabled aria-busy=\"true\"" : ""}>${installing ? '<span class="button-spinner" aria-hidden="true"></span>' : icon(installed ? "arrow" : "download")} ${action}</button>`;
   const category = app.id === "calculator" && language === "en"
     ? t(language, "appCategoryUtilities")
     : app.category;
@@ -30,7 +30,7 @@ function appCard(app, { installed = false, downloaded = false, installing = fals
     <article class="app-card ${compact ? "app-card--compact" : ""}">
       <div class="app-card__top">
         <span class="app-icon app-icon--${app.color} ${compact ? "app-icon--small" : ""}">${iconMarkup}</span>
-        <span class="app-version">v${escapeHtml(app.version)}</span>
+        <span class="app-version" title="${escapeHtml(app.versionError || "")}">${version ? `v${escapeHtml(version)}` : "—"}</span>
       </div>
       <div class="app-card__copy">
         <span class="app-card__category">${escapeHtml(category)}</span>
@@ -53,7 +53,7 @@ function pluralize(count, one, few, many) {
   return many;
 }
 
-function homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError, language }) {
+function homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError, releaseVersionErrors, language }) {
   const installedCount = installedApps.size;
   const downloadCount = downloads.length;
 
@@ -83,6 +83,7 @@ function homePage({ apps, installedApps, downloads, installingApps, installStatu
         : catalogLoading
           ? `<p class="catalog-notice">${t(language, "loadingCatalog")}</p>`
           : `<div class="app-grid app-grid--featured">${apps.map((app) => appCard(app, { installed: installedApps.has(app.id), downloaded: downloads.some((item) => item.id === app.id), installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), compact: true, language })).join("")}</div>`}
+      ${releaseVersionErrors?.size ? `<p class="catalog-notice">${language === "en" ? "Could not verify the latest release for every app; showing the last known versions." : "Не удалось проверить актуальность версий всех приложений — показаны последние известные версии."}</p>` : ""}
     </section>
 
     <section class="hub-overview">
@@ -91,13 +92,16 @@ function homePage({ apps, installedApps, downloads, installingApps, installStatu
     </section>`;
 }
 
-function catalogPage(page, { apps, installedApps, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError, language }) {
+function catalogPage(page, { apps, installedApps, installedVersions, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError, language }) {
   const copy = pageCopy[page];
 
   const catalog = page === "library"
     ? apps.filter((app) => installedApps.has(app.id))
     : page === "downloads"
-      ? [...downloads].reverse().map((download) => apps.find((app) => app.id === download.id)).filter(Boolean)
+      ? [...downloads].reverse().map((download) => {
+          const app = apps.find((item) => item.id === download.id);
+          return app ? { ...app, downloadVersion: download.version } : null;
+        }).filter(Boolean)
       : apps;
   const matchingApps = catalog.filter((app) => `${app.name} ${app.category} ${app.description}`.toLowerCase().includes(query.toLowerCase()));
   const installed = page === "library";
@@ -111,7 +115,7 @@ function catalogPage(page, { apps, installedApps, downloads, installingApps, ins
     : page === "apps" && catalogError
       ? `<div class="empty-state"><h2>${language === "en" ? "Could not load catalog" : "Не удалось загрузить каталог"}</h2><p>${escapeHtml(catalogError)}</p><button class="button button--primary" data-catalog-retry>${t(language, "retry")}</button></div>`
       : matchingApps.length
-        ? `<div class="app-grid">${matchingApps.map((app) => appCard(app, { installed: installed || installedApps.has(app.id), downloaded: page === "downloads", installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), uninstalling: uninstallingApps.has(app.id), compact: false, downloadOnly: page === "downloads", language })).join("")}</div>`
+        ? `<div class="app-grid">${matchingApps.map((app) => appCard(app, { installed: installed || installedApps.has(app.id), downloaded: page === "downloads", installing: installingApps.has(app.id), installStatus: installStatuses.get(app.id), uninstalling: uninstallingApps.has(app.id), compact: false, downloadOnly: page === "downloads", version: page === "downloads" ? app.downloadVersion : installed ? installedVersions?.get(app.id) : app.version, language })).join("")}</div>`
         : `<div class="empty-state"><span class="empty-state__icon">${icon(page === "apps" ? "grid" : page === "downloads" ? "download" : "books")}</span><h2>${page === "apps" && query ? t(language, "notFoundTitle") : page === "apps" ? t(language, "noAppsTitle") : page === "downloads" ? t(language, "noDownloadsTitle") : t(language, "emptyLibraryTitle")}</h2><p>${page === "apps" ? query ? t(language, "notFoundText") : t(language, "noAppsText") : page === "downloads" ? t(language, "noDownloadsText") : t(language, "emptyLibraryText")}</p>${page !== "apps" ? `<button class="button button--primary" data-page="apps">${t(language, "goToApps")} ${icon("arrow")}</button>` : ""}</div>`;
   const intro = language === "en"
     ? {
@@ -168,9 +172,11 @@ export function renderApp({
   apps = [],
   catalogLoading = false,
   catalogError = null,
+  releaseVersionErrors = new Set(),
   query = "",
   downloads = [],
   installedApps = new Set(),
+  installedVersions = new Map(),
   installingApps = new Set(),
   installStatuses = new Map(),
   uninstallingApps = new Set(),
@@ -204,8 +210,8 @@ export function renderApp({
       language,
     })
     : activePage === "home"
-      ? homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError, language })
-      : catalogPage(activePage, { apps, installedApps, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError, language });
+      ? homePage({ apps, installedApps, downloads, installingApps, installStatuses, catalogLoading, catalogError, releaseVersionErrors, language })
+      : catalogPage(activePage, { apps, installedApps, installedVersions, downloads, installingApps, installStatuses, uninstallingApps, query, catalogLoading, catalogError, language });
   const currentTitle = activePage === "settings"
     ? t(language, "settings")
     : activePage === "home"

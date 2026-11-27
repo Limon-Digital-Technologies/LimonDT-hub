@@ -61,8 +61,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .profile-copy small { color: #a1a6b0; font-size: 9px; white-space: nowrap; }
 .profile-button > .icon { width: 14px; height: 14px; color: #9ea4ae; }
 .workspace-scroll { flex: 1; overflow: auto; scrollbar-color: #dce1ea transparent; scrollbar-width: thin; }
-.page-content { width: min(100%, 1120px); min-height: 100%; margin: 0 auto; padding: 31px 40px 42px; animation: page-in .38s cubic-bezier(.2,.7,.2,1) both; }
-@keyframes page-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.page-content { width: min(100%, 1120px); min-height: 100%; margin: 0 auto; padding: 31px 40px 42px; }
 
 .welcome-banner { position: relative; display: flex; min-height: 260px; align-items: center; overflow: hidden; padding: 35px 40px; border-radius: 16px; background: linear-gradient(112deg,#123b88 0%,#1b59bb 52%,#355ee1 100%); color: white; isolation: isolate; }
 .welcome-banner__content { z-index: 1; max-width: 480px; }
@@ -74,6 +73,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .button { display: inline-flex; min-height: 35px; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; border: 0; border-radius: 8px; font-size: 10px; font-weight: 600; cursor: pointer; transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
 .button:hover { transform: translateY(-2px); }
 .button .icon { width: 14px; height: 14px; }
+.button-spinner { width: 13px; height: 13px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: orbit .8s linear infinite; }
 .button--light { background: white; color: #194993; box-shadow: 0 5px 13px rgba(5,27,73,.16); }
 .button--light:hover { background: #eef4ff; }
 .button--primary { background: #1769e8; color: white; }
